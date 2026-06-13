@@ -17,6 +17,7 @@ This is a PlatformIO ESP32 firmware project using the Arduino framework.
 - `pio device monitor -b 115200` opens the serial monitor.
 - `pio run -e esp32dev_ota` builds the OTA environment.
 - `pio run -e esp32dev_ota -t upload` uploads OTA when the ESP32 is awake and reachable.
+- If `pio` is not on `PATH`, use `/home/giuseppe/.platformio/penv/bin/pio` with the same arguments.
 
 The build script requires `secrets.yaml` and regenerates `src/secrets_local.h` automatically. Do not commit generated secrets.
 
@@ -26,6 +27,25 @@ Use readable Arduino C++ with two-space indentation, `constexpr` constants, and 
 
 Avoid runtime YAML parsing. Keep Serial logs useful, but never print WiFi, MQTT, OTA passwords, tokens, or full secret values.
 
+## Home Assistant & MQTT Behavior
+
+Home Assistant must keep sensor data available while the ESP32 is in normal deep sleep.
+
+- Publish sensor states retained so Home Assistant and MQTT clients keep the last known values.
+- Do not add `availability_topic` or `expire_after` to sensor discovery unless the product decision changes.
+- Do not publish an availability `offline` payload for intentional deep sleep.
+- Keep `esp32-meteo-v3/status` as a diagnostic text sensor for `online`, `sleeping`, `offline`, `online; degraded: ...`, and `ota_updating`.
+- Keep the retained `esp32-meteo-v3/control/stay_awake` switch usable while the ESP32 sleeps.
+- Subscribe to `homeassistant/status` and republish retained discovery when Home Assistant announces `online`.
+- Retained discovery configs are acceptable. Check discovery payload sizing and log publish success/failure.
+
+## Sensor Handling Notes
+
+- BMP390/BMP3xx first reading after startup can be inaccurate. Discard one warm-up reading before publishing BMP390 temperature or pressure.
+- SHT41/SHT4x reads use the Adafruit library's command delay and CRC validation through `getEvent()`; no blanket first-read discard is required unless runtime evidence shows a problem.
+- INA226 first conversion can be zero if read too early. Call `waitUntilConversionCompleted()` after initialization/configuration for both INA226 monitors before reading.
+- If a sensor read fails or returns `NAN`, skip publishing that state so the retained last known good value remains visible in Home Assistant.
+
 ## Testing Guidelines
 
 There is no formal unit test suite yet. Minimum validation is:
@@ -33,11 +53,12 @@ There is no formal unit test suite yet. Minimum validation is:
 - Build both environments with PlatformIO.
 - Confirm serial logs show I2C scan, sensor readiness, WiFi, MQTT, HA discovery, publishing, and sleep/OTA state.
 - Verify MQTT topics with Home Assistant or an MQTT client.
+- Confirm Home Assistant still shows retained sensor values while the ESP32 is in normal deep sleep.
 - Confirm deep sleep remains 600 seconds unless stay-awake is enabled.
 
 ## Commit & Pull Request Guidelines
 
-No Git history is available in this workspace. Use concise imperative commit messages, for example `Add HA availability topic` or `Fix MQTT discovery buffer checks`.
+Use concise imperative commit messages, for example `Fix MQTT discovery buffer checks` or `Discard initial BMP390 reading`.
 
 Pull requests should include:
 
