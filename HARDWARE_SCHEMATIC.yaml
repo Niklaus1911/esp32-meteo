@@ -1,0 +1,423 @@
+# Hardware schematic for esp32-meteo-v2 on a normal ESP32 dev board.
+# This is an AI-readable rebuild document for recreating the project on normal ESP32 hardware.
+# It describes the target rebuild as an esp32dev-compatible ESP32 project.
+
+schema_version: "1.0"
+project:
+  name: "esp32-meteo-v2"
+  purpose: "Battery-powered ESP32 MQTT weather node with solar and battery telemetry."
+  firmware_file: "esp32-meteo.yaml"
+  firmware_platform:
+    esphome_name: "esp32-meteo-v2"
+    board: "esp32dev"
+    framework: "esp-idf"
+  primary_interface:
+    type: "mqtt"
+    topic_prefix: "esp32-meteo-v2"
+  sleep_behavior:
+    deep_sleep_duration: "10min"
+    wake_publish_sleep: true
+    stay_awake_control_topic: "esp32-meteo-v2/control/stay_awake"
+
+target_hardware:
+  i2c_bus:
+    id: "bus_a"
+    sda_gpio: "GPIO21"
+    scl_gpio: "GPIO22"
+    scan_enabled: true
+    source: "normal ESP32 dev board default I2C pins"
+  sensor_update_interval: "10s"
+  power_monitor_shunts:
+    battery_ina226:
+      address: "0x41"
+      shunt_resistance: "0.1 ohm"
+      max_current: "0.8A"
+    solar_ina226:
+      address: "0x40"
+      shunt_resistance: "0.1 ohm"
+      max_current: "1.0A"
+
+components:
+  - id: "mcu"
+    type: "development_board"
+    part: "ESP32 DevKit / esp32dev-compatible board"
+    role: "Runs ESPHome firmware, WiFi, MQTT, OTA, deep sleep, and I2C master."
+    required: true
+    firmware_binding:
+      esphome_board: "esp32dev"
+    pins:
+      - pin: "GPIO21"
+        signal: "I2C SDA"
+        net: "i2c_sda"
+      - pin: "GPIO22"
+        signal: "I2C SCL"
+        net: "i2c_scl"
+      - pin: "3V3"
+        signal: "3.3 V peripheral supply"
+        net: "v3v3_i2c"
+      - pin: "GND"
+        signal: "Common ground"
+        net: "gnd"
+    notes:
+      - "USB serial logging is enabled for physical cable debugging."
+      - "Native ESPHome API is enabled for tooling while the node is awake."
+
+  - id: "bmp390"
+    type: "environment_sensor"
+    part: "BMP390 or BMP3xx-compatible I2C breakout"
+    role: "Outdoor pressure and temperature."
+    required: true
+    i2c:
+      address: "0x77"
+      sda_net: "i2c_sda"
+      scl_net: "i2c_scl"
+    power:
+      vcc_net: "v3v3_i2c"
+      gnd_net: "gnd"
+    firmware_binding:
+      esphome_platform: "bmp3xx_i2c"
+      entities:
+        - "BMP390 Temperature"
+        - "Absolute Pressure"
+      pressure_oversampling: "32x"
+      temperature_oversampling: "16x"
+      iir_filter: "16x"
+
+  - id: "sht41"
+    type: "environment_sensor"
+    part: "SHT41 or SHT4x-compatible I2C breakout"
+    role: "Outdoor temperature and relative humidity."
+    required: true
+    i2c:
+      address: "0x44"
+      sda_net: "i2c_sda"
+      scl_net: "i2c_scl"
+    power:
+      vcc_net: "v3v3_i2c"
+      gnd_net: "gnd"
+    firmware_binding:
+      esphome_platform: "sht4x"
+      entities:
+        - "Outside Temperature"
+        - "Outside Humidity"
+
+  - id: "ina226_solar"
+    type: "current_voltage_power_monitor"
+    part: "INA226 I2C high-side monitor breakout"
+    role: "Measures raw solar panel input before the TP5000 charger."
+    required: true
+    i2c:
+      address: "0x40"
+      sda_net: "i2c_sda"
+      scl_net: "i2c_scl"
+    power:
+      vcc_net: "v3v3_i2c"
+      gnd_net: "gnd"
+    measurement:
+      shunt_resistance: "0.1 ohm"
+      max_current: "1.0A"
+      measured_path: "solar_panel_positive_before_charger"
+      preferred_orientation:
+        shunt_input_terminal: "VIN+ / IN+ from solar_panel_positive"
+        shunt_output_terminal: "VIN- / IN- to tp5000_input_positive"
+      current_sign_note: "If current sign is opposite of expected charging direction, swap the INA226 shunt terminals or adjust firmware interpretation."
+    firmware_binding:
+      esphome_platform: "ina226"
+      entities:
+        - "Solar Raw Voltage"
+        - "Solar Panel Current"
+        - "Solar Raw Power"
+
+  - id: "ina226_battery"
+    type: "current_voltage_power_monitor"
+    part: "INA226 I2C high-side monitor breakout"
+    role: "Measures single-cell 18650 battery path voltage, current, and power."
+    required: true
+    i2c:
+      address: "0x41"
+      sda_net: "i2c_sda"
+      scl_net: "i2c_scl"
+    power:
+      vcc_net: "v3v3_i2c"
+      gnd_net: "gnd"
+    measurement:
+      shunt_resistance: "0.1 ohm"
+      max_current: "0.8A"
+      measured_path: "single_cell_18650_positive_path"
+      preferred_orientation:
+        shunt_input_terminal: "VIN+ / IN+ from charger_or_battery_positive_side"
+        shunt_output_terminal: "VIN- / IN- to system_load_or_battery_positive_side"
+      current_sign_note: "Firmware logs measured current only; physical orientation determines whether charge or discharge appears positive."
+    firmware_binding:
+      esphome_platform: "ina226"
+      entities:
+        - "18650 Battery Voltage"
+        - "18650 Battery Current"
+        - "18650 Battery Power"
+        - "18650 Battery Level"
+
+  - id: "charger"
+    type: "single_cell_li_ion_charger"
+    part: "TP5000 charger module"
+    role: "Charges one 18650 Li-ion cell from the solar input path."
+    required: true
+    configuration:
+      chemistry: "single-cell 18650 Li-ion"
+      nominal_full_voltage: "4.2V"
+      caution: "README warns that Li-ion output above about 4.25V should not be trusted."
+    terminals:
+      - terminal: "IN+"
+        net: "tp5000_input_positive"
+      - terminal: "IN-"
+        net: "gnd"
+      - terminal: "BAT+"
+        net: "battery_positive_charger_side"
+      - terminal: "BAT-"
+        net: "gnd"
+    notes:
+      - "Exact TP5000 module variant and charge-current resistor are not specified in the repository."
+
+  - id: "battery"
+    type: "battery"
+    part: "single 18650 Li-ion cell with holder"
+    role: "Energy storage for sleeping weather node."
+    required: true
+    terminals:
+      - terminal: "positive"
+        net: "battery_positive_cell"
+      - terminal: "negative"
+        net: "gnd"
+    firmware_binding:
+      battery_level_curve:
+        source_entity: "18650 Battery Voltage"
+        voltage_percent_points:
+          - { voltage: 3.20, percent: 0.0 }
+          - { voltage: 3.40, percent: 10.0 }
+          - { voltage: 3.58, percent: 20.0 }
+          - { voltage: 3.68, percent: 30.0 }
+          - { voltage: 3.74, percent: 40.0 }
+          - { voltage: 3.79, percent: 50.0 }
+          - { voltage: 3.85, percent: 60.0 }
+          - { voltage: 3.92, percent: 70.0 }
+          - { voltage: 4.00, percent: 80.0 }
+          - { voltage: 4.10, percent: 90.0 }
+          - { voltage: 4.16, percent: 100.0 }
+
+  - id: "solar_panel"
+    type: "solar_panel"
+    part: "small solar panel"
+    role: "Raw energy input for TP5000 charger."
+    required: true
+    terminals:
+      - terminal: "positive"
+        net: "solar_panel_positive"
+      - terminal: "negative"
+        net: "gnd"
+    unknowns:
+      - "Panel voltage, wattage, and connector type are not specified in the repository."
+
+  - id: "system_power_regulator"
+    type: "power_regulator_or_devkit_power_input"
+    part: "UNSPECIFIED"
+    role: "Provides stable power to the ESP32 dev board from the 18650/charger system."
+    required: true
+    status: "not defined by firmware or README"
+    notes:
+      - "A rebuild needs a real power path from the 18650 system to the ESP32 dev board."
+      - "Use either a suitable 3.3 V regulator feeding the ESP32 3V3 pin, or a board-supported VIN/5V input if the selected DevKit and regulator can run from the battery voltage range."
+      - "Verify deep-sleep quiescent current; many DevKit boards and regulator modules waste more current than the ESP32 itself."
+
+nets:
+  - id: "i2c_sda"
+    role: "I2C data"
+    nominal_voltage: "3.3V logic"
+    connections:
+      - "mcu.GPIO21"
+      - "bmp390.SDA"
+      - "sht41.SDA"
+      - "ina226_solar.SDA"
+      - "ina226_battery.SDA"
+    pullups:
+      required: true
+      recommendation: "Use 4.7k to 10k pull-up to v3v3_i2c if the breakouts do not already provide I2C pull-ups."
+
+  - id: "i2c_scl"
+    role: "I2C clock"
+    nominal_voltage: "3.3V logic"
+    connections:
+      - "mcu.GPIO22"
+      - "bmp390.SCL"
+      - "sht41.SCL"
+      - "ina226_solar.SCL"
+      - "ina226_battery.SCL"
+    pullups:
+      required: true
+      recommendation: "Use 4.7k to 10k pull-up to v3v3_i2c if the breakouts do not already provide I2C pull-ups."
+
+  - id: "v3v3_i2c"
+    role: "3.3 V supply for I2C peripherals"
+    nominal_voltage: "3.3V"
+    connections:
+      - "mcu.3V3"
+      - "bmp390.VCC"
+      - "sht41.VCC"
+      - "ina226_solar.VCC"
+      - "ina226_battery.VCC"
+    notes:
+      - "Do not power I2C pull-ups above 3.3 V when connected directly to ESP32 GPIOs."
+
+  - id: "gnd"
+    role: "Common return"
+    nominal_voltage: "0V"
+    connections:
+      - "mcu.GND"
+      - "bmp390.GND"
+      - "sht41.GND"
+      - "ina226_solar.GND"
+      - "ina226_battery.GND"
+      - "solar_panel.negative"
+      - "charger.IN-"
+      - "charger.BAT-"
+      - "battery.negative"
+      - "system_power_regulator.GND"
+
+  - id: "solar_panel_positive"
+    role: "Raw solar panel positive before current shunt"
+    connections:
+      - "solar_panel.positive"
+      - "ina226_solar.VIN+"
+
+  - id: "tp5000_input_positive"
+    role: "Solar positive after INA226 shunt, before TP5000 input"
+    connections:
+      - "ina226_solar.VIN-"
+      - "ina226_solar.VBUS"
+      - "charger.IN+"
+
+  - id: "battery_positive_charger_side"
+    role: "Battery charger positive side before/through battery monitor"
+    connections:
+      - "charger.BAT+"
+      - "ina226_battery.VIN+"
+    uncertainty: "Repository does not define whether this side is charger, cell, or load side; this orientation is the recommended rebuild starting point."
+
+  - id: "battery_positive_cell"
+    role: "Single-cell 18650 positive after battery monitor shunt"
+    connections:
+      - "ina226_battery.VIN-"
+      - "ina226_battery.VBUS"
+      - "battery.positive"
+      - "system_power_regulator.input_positive"
+    uncertainty: "Exact system-load attachment point is not specified. Verify charger/load behavior and current sign on real hardware."
+
+  - id: "esp32_power_input"
+    role: "Regulated input powering ESP32 dev board"
+    connections:
+      - "system_power_regulator.output_positive"
+      - "mcu.power_input"
+    uncertainty: "The exact ESP32 dev board power pin is not specified. Choose 3V3, VIN, 5V, or USB according to the actual DevKit and regulator used."
+
+logical_power_flow:
+  - from: "solar_panel"
+    through: "ina226_solar high-side shunt"
+    to: "TP5000 IN+"
+    measured_entities:
+      - "Solar Raw Voltage"
+      - "Solar Panel Current"
+      - "Solar Raw Power"
+  - from: "TP5000 BAT+ / 18650 positive path"
+    through: "ina226_battery high-side shunt"
+    to: "18650 cell and system power regulator"
+    measured_entities:
+      - "18650 Battery Voltage"
+      - "18650 Battery Current"
+      - "18650 Battery Power"
+      - "18650 Battery Level"
+  - from: "18650/system power regulator"
+    to: "ESP32 dev board and 3.3 V I2C peripherals"
+    status: "regulator details unspecified"
+
+firmware_entities:
+  environmental:
+    - name: "BMP390 Temperature"
+      component: "bmp390"
+      units: "degC"
+    - name: "Absolute Pressure"
+      component: "bmp390"
+      units: "hPa"
+    - name: "Outside Temperature"
+      component: "sht41"
+      units: "degC"
+    - name: "Outside Humidity"
+      component: "sht41"
+      units: "%"
+  power:
+    - name: "18650 Battery Voltage"
+      component: "ina226_battery"
+      units: "V"
+    - name: "18650 Battery Current"
+      component: "ina226_battery"
+      units: "mA"
+    - name: "18650 Battery Power"
+      component: "ina226_battery"
+      units: "W"
+    - name: "18650 Battery Level"
+      component: "ina226_battery"
+      units: "%"
+    - name: "Solar Raw Voltage"
+      component: "ina226_solar"
+      units: "V"
+    - name: "Solar Panel Current"
+      component: "ina226_solar"
+      units: "mA"
+    - name: "Solar Raw Power"
+      component: "ina226_solar"
+      units: "W"
+  diagnostics:
+    - "WiFi Signal"
+    - "WiFi IP Address"
+    - "WiFi SSID"
+    - "WiFi BSSID"
+    - "WiFi MAC Address"
+    - "Safe Mode Was Triggered"
+    - "OTA Rollback Detected"
+    - "OTA Last Invalid Partition"
+    - "Last Reset Reason"
+    - "Previous Boot Stage"
+    - "Current Boot Stage"
+
+rebuild_steps:
+  - "Assemble a common 3.3 V I2C bus: ESP32 GPIO21 to all SDA pins, GPIO22 to all SCL pins, shared GND, and 3.3 V peripheral power."
+  - "Configure BMP390 address to 0x77 and SHT41 address to 0x44."
+  - "Configure the solar INA226 address to 0x40 and place its 0.1 ohm shunt in series with the solar panel positive lead before TP5000 IN+."
+  - "Configure the battery INA226 address to 0x41 and place its 0.1 ohm shunt in series with the 18650 positive path."
+  - "Connect TP5000 for single-cell Li-ion charging: solar monitored positive to IN+, common ground to IN-/BAT-, and charger BAT+ to the battery positive path."
+  - "Add a battery-to-ESP32 power regulator or use a board-supported power input. This is required but not specified by the current repository."
+  - "Flash the ESP32 target firmware with local secrets.yaml values for WiFi, MQTT, static IP, and fallback AP."
+  - "Run ESPHome config validation before flashing or committing firmware changes."
+  - "On first boot, watch serial logs and I2C scan output to verify devices at 0x40, 0x41, 0x44, and 0x77."
+  - "Verify INA226 current sign under solar charging and battery discharge; adjust physical shunt orientation if needed."
+
+validation_targets:
+  i2c_scan_expected_addresses:
+    - "0x40"
+    - "0x41"
+    - "0x44"
+    - "0x77"
+  esphome_validation_command: "esphome config esp32-meteo.yaml"
+  mqtt_discovery:
+    topic_prefix: "esp32-meteo-v2"
+    important_control_topic: "esp32-meteo-v2/control/stay_awake"
+  hardware_sanity_checks:
+    - "I2C pull-ups are to 3.3 V, not battery or solar voltage."
+    - "All sensor and monitor grounds share common ground with ESP32."
+    - "TP5000 output for Li-ion charging stays at or below about 4.25 V."
+    - "ESP32 supply remains stable during WiFi connect and MQTT publish."
+    - "Deep-sleep current is measured after assembly because DevKit boards and regulator modules can dominate battery drain."
+
+known_unknowns:
+  - "Exact solar panel rating is not documented."
+  - "Exact TP5000 module variant, charge current, and resistor setting are not documented."
+  - "Exact ESP32 dev board power input method and regulator are not documented."
+  - "Exact physical INA226 current direction/sign convention is not documented."
+  - "Enclosure, connector pinout, cable colors, and weatherproofing are not documented."
