@@ -44,6 +44,7 @@ constexpr uint32_t kWifiRetryDelayMs = 250;
 constexpr uint32_t kMqttRetryDelayMs = 500;
 constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
 constexpr uint32_t kSensorPostInitSettleDelayMs = 1000;
+constexpr uint32_t kBmp390WarmupDiscardDelayMs = 250;
 constexpr uint32_t kBeforeFirstReadDelayMs = 500;
 constexpr size_t kMqttBufferSize = 2048;
 constexpr size_t kMqttMaxHeaderBytes = 5;
@@ -244,6 +245,17 @@ void initializeSensors() {
       bmp.setPressureOversampling(BMP3_OVERSAMPLING_32X);
       bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_15);
       Serial.println("BMP390/BMP3xx initialized with pressure 32x, temperature 16x, IIR 16x");
+      // The BMP3XX first sample after startup may be inaccurate; discard it before publishing.
+      if (bmp.performReading()) {
+        Serial.printf("BMP390/BMP3xx warm-up discard: temperature %.2f C, pressure %.2f hPa\n",
+                      bmp.temperature,
+                      bmp.pressure / 100.0f);
+      } else {
+        Serial.println("BMP390/BMP3xx warm-up discard read failed");
+      }
+      Serial.printf("Waiting %lu ms after BMP390/BMP3xx warm-up discard\n",
+                    static_cast<unsigned long>(kBmp390WarmupDiscardDelayMs));
+      delay(kBmp390WarmupDiscardDelayMs);
     } else {
       Serial.println("BMP390/BMP3xx initialization failed");
     }
