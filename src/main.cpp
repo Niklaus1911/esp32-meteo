@@ -7,6 +7,7 @@
 #include <Adafruit_SHT4x.h>
 #include <INA226_WE.h>
 #include <esp_sleep.h>
+#include <cstdarg>
 
 #include "secrets_local.h"
 
@@ -44,6 +45,8 @@ constexpr uint32_t kMqttRetryDelayMs = 500;
 constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
 constexpr uint32_t kSensorPostInitSettleDelayMs = 1000;
 constexpr uint32_t kBeforeFirstReadDelayMs = 500;
+constexpr size_t kMqttBufferSize = 2048;
+constexpr size_t kMqttMaxHeaderBytes = 5;
 
 constexpr float kInaShuntOhms = 0.1f;
 constexpr float kSolarMaxCurrentA = 1.0f;
@@ -114,6 +117,41 @@ void logPhase(const char* phase) {
 
 const char* yesNo(bool value) {
   return value ? "yes" : "no";
+}
+
+bool formatInto(char* buffer, size_t bufferSize, const char* description, const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  const int written = vsnprintf(buffer, bufferSize, format, args);
+  va_end(args);
+
+  if (written < 0) {
+    Serial.printf("Formatting failed for %s\n", description);
+    return false;
+  }
+  if (static_cast<size_t>(written) >= bufferSize) {
+    Serial.printf("Formatting truncated for %s: needed %u bytes, buffer has %u bytes\n",
+                  description,
+                  static_cast<unsigned int>(written + 1),
+                  static_cast<unsigned int>(bufferSize));
+    return false;
+  }
+  return true;
+}
+
+bool appendChecked(char* destination, size_t destinationSize, const char* description, const char* value) {
+  const size_t used = strlen(destination);
+  const size_t valueLength = strlen(value);
+  if (used + valueLength >= destinationSize) {
+    Serial.printf("Formatting truncated for %s: needed %u bytes, buffer has %u bytes\n",
+                  description,
+                  static_cast<unsigned int>(used + valueLength + 1),
+                  static_cast<unsigned int>(destinationSize));
+    return false;
+  }
+
+  strlcat(destination, value, destinationSize);
+  return true;
 }
 
 String topic(const char* suffix) {
@@ -548,12 +586,18 @@ bool connectMqtt() {
   logPhase("MQTT");
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
-  mqttClient.setBufferSize(1024);
+  const bool bufferConfigured = mqttClient.setBufferSize(kMqttBufferSize);
 
   Serial.printf("MQTT server: %s:%u\n", MQTT_HOST, MQTT_PORT);
+  Serial.printf("MQTT buffer size %u bytes: %s\n",
+                static_cast<unsigned int>(kMqttBufferSize),
+                bufferConfigured ? "ok" : "FAILED");
   Serial.printf("MQTT client ID prefix: %s\n", kTopicPrefix);
   Serial.printf("MQTT status topic: %s\n", kStatusTopic);
   Serial.printf("MQTT stay-awake topic: %s\n", kStayAwakeTopic);
+  if (!bufferConfigured) {
+    return false;
+  }
   Serial.printf("Connecting to MQTT with timeout %lu ms\n", static_cast<unsigned long>(kMqttConnectTimeoutMs));
   const uint32_t started = millis();
   uint8_t attempt = 0;
@@ -570,8 +614,8 @@ bool connectMqtt() {
             true,
             "offline")) {
       Serial.printf("MQTT connected in %lu ms\n", static_cast<unsigned long>(millis() - started));
-      const bool onlinePublished = mqttClient.publish(kStatusTopic, "online", true);
-      Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, onlinePublished ? "ok" : "FAILED");
+      const bool statusPublished = mqttClient.publish(kStatusTopic, "online", true);
+      Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
       const bool subscribed = mqttClient.subscribe(kStayAwakeTopic, 1);
       Serial.printf("MQTT subscribe %s qos=1: %s\n", kStayAwakeTopic, subscribed ? "ok" : "FAILED");
       const bool haSubscribed = mqttClient.subscribe(kHaStatusTopic, 0);
@@ -616,12 +660,28 @@ void publishText(const char* suffix, const char* value, bool retained = true) {
 
 void publishDiscoveryPayload(const char* component, const char* objectId, const char* payload) {
   char discoveryTopic[160];
-  snprintf(discoveryTopic,
-           sizeof(discoveryTopic),
-           "%s/%s/%s/config",
-           kHaDiscoveryPrefix,
-           component,
-           objectId);
+  if (!formatInto(discoveryTopic,
+                  sizeof(discoveryTopic),
+                  "Home Assistant discovery topic",
+                  "%s/%s/%s/config",
+                  kHaDiscoveryPrefix,
+                  component,
+                  objectId)) {
+    Serial.printf("HA discovery skipped for %s/%s: topic too long\n", component, objectId);
+    return;
+  }
+
+  const size_t payloadLength = strlen(payload);
+  const size_t packetBytes = kMqttMaxHeaderBytes + 2 + strlen(discoveryTopic) + payloadLength;
+  Serial.printf("HA discovery payload %s: payload=%u bytes, packet_estimate=%u/%u bytes\n",
+                discoveryTopic,
+                static_cast<unsigned int>(payloadLength),
+                static_cast<unsigned int>(packetBytes),
+                static_cast<unsigned int>(kMqttBufferSize));
+  if (packetBytes > kMqttBufferSize) {
+    Serial.printf("HA discovery skipped %s: MQTT packet estimate exceeds buffer\n", discoveryTopic);
+    return;
+  }
 
   const bool ok = mqttClient.publish(discoveryTopic, payload, true);
   Serial.printf("HA discovery publish %s retained: %s\n", discoveryTopic, ok ? "ok" : "FAILED");
@@ -639,64 +699,84 @@ void publishHaSensorDiscovery(const char* objectId,
 
   if (deviceClass && deviceClass[0]) {
     char field[64];
-    snprintf(field, sizeof(field), ",\"device_class\":\"%s\"", deviceClass);
-    strlcat(optionalFields, field, sizeof(optionalFields));
+    if (!formatInto(field, sizeof(field), "HA sensor device_class field", ",\"device_class\":\"%s\"", deviceClass) ||
+        !appendChecked(optionalFields, sizeof(optionalFields), "HA sensor optional fields", field)) {
+      Serial.printf("HA discovery skipped for %s: optional device_class too long\n", objectId);
+      return;
+    }
   }
   if (unit && unit[0]) {
     char field[64];
-    snprintf(field, sizeof(field), ",\"unit_of_measurement\":\"%s\"", unit);
-    strlcat(optionalFields, field, sizeof(optionalFields));
+    if (!formatInto(field, sizeof(field), "HA sensor unit field", ",\"unit_of_measurement\":\"%s\"", unit) ||
+        !appendChecked(optionalFields, sizeof(optionalFields), "HA sensor optional fields", field)) {
+      Serial.printf("HA discovery skipped for %s: optional unit too long\n", objectId);
+      return;
+    }
   }
   if (stateClass && stateClass[0]) {
     char field[64];
-    snprintf(field, sizeof(field), ",\"state_class\":\"%s\"", stateClass);
-    strlcat(optionalFields, field, sizeof(optionalFields));
+    if (!formatInto(field, sizeof(field), "HA sensor state_class field", ",\"state_class\":\"%s\"", stateClass) ||
+        !appendChecked(optionalFields, sizeof(optionalFields), "HA sensor optional fields", field)) {
+      Serial.printf("HA discovery skipped for %s: optional state_class too long\n", objectId);
+      return;
+    }
   }
   if (entityCategory && entityCategory[0]) {
     char field[80];
-    snprintf(field, sizeof(field), ",\"entity_category\":\"%s\"", entityCategory);
-    strlcat(optionalFields, field, sizeof(optionalFields));
+    if (!formatInto(field, sizeof(field), "HA sensor entity_category field", ",\"entity_category\":\"%s\"", entityCategory) ||
+        !appendChecked(optionalFields, sizeof(optionalFields), "HA sensor optional fields", field)) {
+      Serial.printf("HA discovery skipped for %s: optional entity_category too long\n", objectId);
+      return;
+    }
   }
 
-  snprintf(payload,
-           sizeof(payload),
-           "{\"name\":\"%s\",\"unique_id\":\"%s\",\"state_topic\":\"%s\"%s,"
-           "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
-           "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
-           name,
-           objectId,
-           stateTopic,
-           optionalFields,
-           kHaDeviceIdentifier,
-           kHaDeviceName,
-           kHaManufacturer,
-           kHaModel,
-           kFirmwareName,
-           kFirmwareName,
-           kFirmwareName);
+  if (!formatInto(payload,
+                  sizeof(payload),
+                  "HA sensor discovery payload",
+                  "{\"name\":\"%s\",\"unique_id\":\"%s\",\"state_topic\":\"%s\"%s,"
+                  "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
+                  "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
+                  name,
+                  objectId,
+                  stateTopic,
+                  optionalFields,
+                  kHaDeviceIdentifier,
+                  kHaDeviceName,
+                  kHaManufacturer,
+                  kHaModel,
+                  kFirmwareName,
+                  kFirmwareName,
+                  kFirmwareName)) {
+    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
+    return;
+  }
 
   publishDiscoveryPayload("sensor", objectId, payload);
 }
 
 void publishHaSwitchDiscovery() {
   char payload[1024];
-  snprintf(payload,
-           sizeof(payload),
-           "{\"name\":\"Stay Awake\",\"unique_id\":\"esp32_meteo_v3_stay_awake\","
-           "\"command_topic\":\"%s\",\"state_topic\":\"%s\","
-           "\"payload_on\":\"true\",\"payload_off\":\"false\","
-           "\"state_on\":\"true\",\"state_off\":\"false\",\"retain\":true,"
-           "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
-           "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
-           kStayAwakeTopic,
-           kStayAwakeTopic,
-           kHaDeviceIdentifier,
-           kHaDeviceName,
-           kHaManufacturer,
-           kHaModel,
-           kFirmwareName,
-           kFirmwareName,
-           kFirmwareName);
+  if (!formatInto(payload,
+                  sizeof(payload),
+                  "HA switch discovery payload",
+                  "{\"name\":\"Stay Awake\",\"unique_id\":\"esp32_meteo_v3_stay_awake\","
+                  "\"command_topic\":\"%s\",\"state_topic\":\"%s\","
+                  "\"payload_on\":\"true\",\"payload_off\":\"false\","
+                  "\"state_on\":\"true\",\"state_off\":\"false\",\"retain\":true,"
+                  "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
+                  "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
+                  kStayAwakeTopic,
+                  kStayAwakeTopic,
+                  kHaDeviceIdentifier,
+                  kHaDeviceName,
+                  kHaManufacturer,
+                  kHaModel,
+                  kFirmwareName,
+                  kFirmwareName,
+                  kFirmwareName)) {
+    Serial.println("HA discovery skipped for esp32_meteo_v3_stay_awake: payload too long");
+    return;
+  }
 
   publishDiscoveryPayload("switch", "esp32_meteo_v3_stay_awake", payload);
 }
@@ -716,7 +796,7 @@ void publishHomeAssistantDiscovery() {
   publishHaSensorDiscovery("esp32_meteo_v3_absolute_pressure",
                            "Absolute Pressure",
                            topic("/sensor/absolute_pressure").c_str(),
-                           "pressure",
+                           "atmospheric_pressure",
                            "hPa",
                            "measurement",
                            "");
@@ -887,8 +967,8 @@ void sleepForDefaultInterval(const char* reason) {
   }
   Serial.printf("Entering deep sleep for %llu seconds: %s\n", kDeepSleepSeconds, reason);
   if (mqttClient.connected()) {
-    const bool ok = mqttClient.publish(kStatusTopic, "sleeping", true);
-    Serial.printf("MQTT publish %s = sleeping retained: %s\n", kStatusTopic, ok ? "ok" : "FAILED");
+    const bool statusOk = mqttClient.publish(kStatusTopic, "sleeping", true);
+    Serial.printf("MQTT publish %s = sleeping retained: %s\n", kStatusTopic, statusOk ? "ok" : "FAILED");
     flushMqtt(kMqttFlushMs);
     mqttClient.disconnect();
     Serial.println("MQTT disconnected");
