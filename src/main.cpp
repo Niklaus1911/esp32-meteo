@@ -37,15 +37,17 @@ constexpr uint64_t kDeepSleepSeconds = 10ULL * 60ULL;
 constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
 constexpr uint32_t kWifiConnectTimeoutMs = 20UL * 1000UL;
 constexpr uint32_t kMqttConnectTimeoutMs = 10UL * 1000UL;
-constexpr uint32_t kRetainedCommandWaitMs = 2500;
+constexpr uint32_t kRetainedCommandWaitMs = 5000;
 constexpr uint32_t kMqttFlushMs = 1500;
 constexpr uint32_t kTelemetryFlushMs = 750;
 constexpr uint32_t kWifiRetryDelayMs = 250;
 constexpr uint32_t kMqttRetryDelayMs = 500;
 constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
 constexpr uint32_t kSensorPostInitSettleDelayMs = 1000;
+constexpr uint32_t kBmp390InitRetryDelayMs = 1000;
 constexpr uint32_t kBmp390WarmupDiscardDelayMs = 250;
 constexpr uint32_t kBeforeFirstReadDelayMs = 500;
+constexpr uint8_t kBmp390InitAttempts = 3;
 constexpr size_t kMqttBufferSize = 2048;
 constexpr size_t kMqttMaxHeaderBytes = 5;
 
@@ -110,6 +112,7 @@ uint32_t lastPublishMs = 0;
 
 void publishHomeAssistantDiscovery();
 void flushMqtt(uint32_t durationMs);
+void waitForRetainedStayAwakeCommand();
 
 void logPhase(const char* phase) {
   Serial.println();
@@ -235,33 +238,64 @@ void scanI2cBus() {
       yesNo(devices.bmp390Present));
 }
 
+void configureBmp390AfterInit() {
+  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_16X);
+  bmp.setPressureOversampling(BMP3_OVERSAMPLING_32X);
+  bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_15);
+  Serial.println("BMP390/BMP3xx initialized with pressure 32x, temperature 16x, IIR 16x");
+  // The BMP3XX first sample after startup may be inaccurate; discard it before publishing.
+  if (bmp.performReading()) {
+    Serial.printf("BMP390/BMP3xx warm-up discard: temperature %.2f C, pressure %.2f hPa\n",
+                  bmp.temperature,
+                  bmp.pressure / 100.0f);
+  } else {
+    Serial.println("BMP390/BMP3xx warm-up discard read failed");
+  }
+  Serial.printf("Waiting %lu ms after BMP390/BMP3xx warm-up discard\n",
+                static_cast<unsigned long>(kBmp390WarmupDiscardDelayMs));
+  delay(kBmp390WarmupDiscardDelayMs);
+}
+
+void initializeBmp390() {
+  devices.bmp390Ready = false;
+
+  for (uint8_t attempt = 1; attempt <= kBmp390InitAttempts; ++attempt) {
+    devices.bmp390Present = i2cAddressPresent(kBmp390Address);
+    if (!devices.bmp390Present) {
+      Serial.printf("BMP390/BMP3xx not present at 0x%02X on init attempt %u/%u\n",
+                    kBmp390Address,
+                    attempt,
+                    kBmp390InitAttempts);
+    } else {
+      Serial.printf("Initializing BMP390/BMP3xx at 0x%02X, attempt %u/%u\n",
+                    kBmp390Address,
+                    attempt,
+                    kBmp390InitAttempts);
+      devices.bmp390Ready = bmp.begin_I2C(kBmp390Address, &Wire);
+      if (devices.bmp390Ready) {
+        configureBmp390AfterInit();
+        return;
+      }
+      Serial.printf("BMP390/BMP3xx initialization failed on attempt %u/%u\n", attempt, kBmp390InitAttempts);
+    }
+
+    if (attempt < kBmp390InitAttempts) {
+      Serial.printf("Waiting %lu ms before BMP390/BMP3xx init retry\n",
+                    static_cast<unsigned long>(kBmp390InitRetryDelayMs));
+      delay(kBmp390InitRetryDelayMs);
+    }
+  }
+
+  if (!devices.bmp390Present) {
+    Serial.printf("Skipping BMP390/BMP3xx init because 0x%02X is missing after retries\n", kBmp390Address);
+  } else {
+    Serial.println("BMP390/BMP3xx initialization failed after retries");
+  }
+}
+
 void initializeSensors() {
   logPhase("Sensor initialization");
-  if (devices.bmp390Present) {
-    Serial.printf("Initializing BMP390/BMP3xx at 0x%02X\n", kBmp390Address);
-    devices.bmp390Ready = bmp.begin_I2C(kBmp390Address, &Wire);
-    if (devices.bmp390Ready) {
-      bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_16X);
-      bmp.setPressureOversampling(BMP3_OVERSAMPLING_32X);
-      bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_15);
-      Serial.println("BMP390/BMP3xx initialized with pressure 32x, temperature 16x, IIR 16x");
-      // The BMP3XX first sample after startup may be inaccurate; discard it before publishing.
-      if (bmp.performReading()) {
-        Serial.printf("BMP390/BMP3xx warm-up discard: temperature %.2f C, pressure %.2f hPa\n",
-                      bmp.temperature,
-                      bmp.pressure / 100.0f);
-      } else {
-        Serial.println("BMP390/BMP3xx warm-up discard read failed");
-      }
-      Serial.printf("Waiting %lu ms after BMP390/BMP3xx warm-up discard\n",
-                    static_cast<unsigned long>(kBmp390WarmupDiscardDelayMs));
-      delay(kBmp390WarmupDiscardDelayMs);
-    } else {
-      Serial.println("BMP390/BMP3xx initialization failed");
-    }
-  } else {
-    Serial.printf("Skipping BMP390/BMP3xx init because 0x%02X is missing\n", kBmp390Address);
-  }
+  initializeBmp390();
 
   if (devices.sht41Present) {
     Serial.printf("Initializing SHT41/SHT4x at 0x%02X\n", kSht41Address);
@@ -630,9 +664,13 @@ bool connectMqtt() {
       Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
       const bool subscribed = mqttClient.subscribe(kStayAwakeTopic, 1);
       Serial.printf("MQTT subscribe %s qos=1: %s\n", kStayAwakeTopic, subscribed ? "ok" : "FAILED");
+      if (!subscribed) {
+        return false;
+      }
+      waitForRetainedStayAwakeCommand();
       const bool haSubscribed = mqttClient.subscribe(kHaStatusTopic, 0);
       Serial.printf("MQTT subscribe %s qos=0: %s\n", kHaStatusTopic, haSubscribed ? "ok" : "FAILED");
-      if (!subscribed || !haSubscribed) {
+      if (!haSubscribed) {
         return false;
       }
       publishHomeAssistantDiscovery();
@@ -1063,7 +1101,6 @@ void appSetup() {
     sleepForDefaultInterval("MQTT unavailable");
   }
 
-  waitForRetainedStayAwakeCommand();
   Serial.printf("Waiting %lu ms before first sensor read after boot/wake\n",
                 static_cast<unsigned long>(kBeforeFirstReadDelayMs));
   delay(kBeforeFirstReadDelayMs);
