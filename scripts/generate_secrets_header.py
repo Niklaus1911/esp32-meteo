@@ -53,6 +53,20 @@ def optional_present(values, names):
     return ""
 
 
+def battery_chemistry_config(value):
+    normalized = value.strip().lower().replace("-", "_") if value else "li_ion"
+    chemistries = {
+        "li_ion": (0, "li_ion", "Li-ion"),
+        "liion": (0, "li_ion", "Li-ion"),
+        "lithium_ion": (0, "li_ion", "Li-ion"),
+        "lifepo4": (1, "lifepo4", "LiFePO4"),
+        "life_po4": (1, "lifepo4", "LiFePO4"),
+    }
+    if normalized not in chemistries:
+        raise ValueError("battery_chemistry must be one of: li_ion, lifepo4")
+    return chemistries[normalized]
+
+
 def validate_ipv4(value, public_name):
     parts = value.split(".")
     if len(parts) != 4:
@@ -107,6 +121,9 @@ def generate_header():
     mqtt_username = first_present(values, ("mqtt_username",), "MQTT_USERNAME")
     mqtt_password = first_present(values, ("mqtt_password",), "MQTT_PASSWORD")
     ota_password = first_present(values, ("ota_password",), "OTA_PASSWORD")
+    battery_chemistry_id, battery_chemistry_key, battery_chemistry_name = battery_chemistry_config(
+        optional_present(values, ("battery_chemistry",))
+    )
 
     try:
         mqtt_port = int(mqtt_port_raw)
@@ -141,6 +158,9 @@ def generate_header():
                 f"static constexpr const char* MQTT_PASSWORD = {cpp_string(mqtt_password)};",
                 'static constexpr const char* OTA_HOSTNAME = "esp32-meteo-v3";',
                 f"static constexpr const char* OTA_PASSWORD = {cpp_string(ota_password)};",
+                f"static constexpr uint8_t BATTERY_CHEMISTRY_ID = {battery_chemistry_id};",
+                f"static constexpr const char* BATTERY_CHEMISTRY_KEY = {cpp_string(battery_chemistry_key)};",
+                f"static constexpr const char* BATTERY_CHEMISTRY_NAME = {cpp_string(battery_chemistry_name)};",
                 "",
             ]
         ),

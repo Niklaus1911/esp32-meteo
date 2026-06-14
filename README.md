@@ -38,10 +38,28 @@ The firmware currently targets the `esp32-meteo-v3` MQTT topic prefix and publis
 | SHT41 / SHT4x | Outside temperature and humidity | `0x44` |
 | INA226 | Solar input voltage, current, power | `0x40` |
 | INA226 | Battery voltage, current, power, level | `0x41` |
-| TP5000 module | Single-cell Li-ion charging | n/a |
-| 18650 Li-ion cell | Battery storage | n/a |
+| TP5000 module | Single-cell battery charging, configured for installed chemistry | n/a |
+| Single-cell battery | Li-ion or LiFePO4 storage, selected in `secrets.yaml` | n/a |
 
 I2C uses GPIO21 for SDA and GPIO22 for SCL. Keep I2C pullups tied to 3.3 V only.
+
+### Power Design
+
+Firmware deep sleep keeps the ESP32 in its low-power sleep mode between wake cycles, but real battery drain depends on the selected DevKit board, regulator, charger module, and sensor breakout quiescent current.
+
+Do not power the ESP32 3.3 V rail directly from a single LiFePO4 cell. A fully charged LiFePO4 cell can exceed the ESP32 3.3 V supply range, while a discharged cell may fall too low for stable WiFi operation. Use a low-quiescent-current 3.3 V regulator or buck-boost regulator sized for WiFi transmit current, then measure the assembled deep-sleep current.
+
+### Battery Chemistry
+
+Set the battery chemistry in local `secrets.yaml`:
+
+```yaml
+battery_chemistry: li_ion
+```
+
+Valid values are `li_ion` and `lifepo4`. The value defaults to `li_ion` if omitted. The selected chemistry controls the `/sensor/battery_level` voltage-to-percent curve and is published retained at `/diagnostic/battery_chemistry`.
+
+Battery percentage is an estimate from voltage only. It is usually useful for Li-ion cells, but LiFePO4 has a very flat discharge plateau, so the estimate is less precise between roughly 20% and 90%, especially while charging, under WiFi load, or immediately after load changes. Use `/sensor/battery_voltage` alongside the percentage when evaluating real runtime.
 
 ## MQTT Topics
 
@@ -70,6 +88,7 @@ Important topics:
 | `esp32-meteo-v3/sensor/solar_raw_power` | Solar input power |
 | `esp32-meteo-v3/diagnostic/reset_reason` | Last reset reason |
 | `esp32-meteo-v3/diagnostic/sensor_readiness` | Compact readiness and degraded sensor state |
+| `esp32-meteo-v3/diagnostic/battery_chemistry` | Selected battery chemistry for percentage estimate |
 
 ## Home Assistant Behavior
 
@@ -91,7 +110,7 @@ The firmware is intentionally optimized for a sleepy MQTT device:
    cp secrets.example.yaml secrets.yaml
    ```
 
-3. Edit `secrets.yaml` with local WiFi, MQTT, and OTA values.
+3. Edit `secrets.yaml` with local WiFi, MQTT, OTA, and battery chemistry values.
 4. Build the USB upload environment:
 
    ```sh
@@ -154,5 +173,7 @@ For hardware validation, check serial logs for I2C scan results, sensor readines
 ## Safety Notes
 
 - Use 3.3 V I2C levels only.
+- Do not connect a LiFePO4 cell directly to the ESP32 3.3 V rail; use a suitable low-Iq regulator or buck-boost supply.
+- Match the charger module, charge voltage, charge current, and protection circuit to the installed battery chemistry.
 - Treat any single-cell Li-ion charger output above about 4.25 V as unsafe or untrusted.
-- Verify the TP5000 module variant, charge current, regulator path, and battery protection before unattended solar use.
+- Verify the TP5000 module variant, chemistry configuration, charge current, regulator path, and battery protection before unattended solar use.

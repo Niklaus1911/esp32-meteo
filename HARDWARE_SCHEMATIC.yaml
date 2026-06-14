@@ -131,7 +131,7 @@ components:
   - id: "ina226_battery"
     type: "current_voltage_power_monitor"
     part: "INA226 I2C high-side monitor breakout"
-    role: "Measures single-cell 18650 battery path voltage, current, and power."
+    role: "Measures single-cell battery path voltage, current, and power."
     required: true
     i2c:
       address: "0x41"
@@ -143,7 +143,7 @@ components:
     measurement:
       shunt_resistance: "0.1 ohm"
       max_current: "0.8A"
-      measured_path: "single_cell_18650_positive_path"
+      measured_path: "single_cell_battery_positive_path"
       preferred_orientation:
         shunt_input_terminal: "VIN+ / IN+ from charger_or_battery_positive_side"
         shunt_output_terminal: "VIN- / IN- to system_load_or_battery_positive_side"
@@ -151,20 +151,22 @@ components:
     firmware_binding:
       esphome_platform: "ina226"
       entities:
-        - "18650 Battery Voltage"
-        - "18650 Battery Current"
-        - "18650 Battery Power"
-        - "18650 Battery Level"
+        - "Battery Voltage"
+        - "Battery Current"
+        - "Battery Power"
+        - "Battery Level"
 
   - id: "charger"
-    type: "single_cell_li_ion_charger"
+    type: "single_cell_battery_charger"
     part: "TP5000 charger module"
-    role: "Charges one 18650 Li-ion cell from the solar input path."
+    role: "Charges one single-cell battery from the solar input path."
     required: true
     configuration:
-      chemistry: "single-cell 18650 Li-ion"
-      nominal_full_voltage: "4.2V"
-      caution: "README warns that Li-ion output above about 4.25V should not be trusted."
+      chemistry: "Must match battery_chemistry in secrets.yaml and the installed cell. Supported firmware values: li_ion, lifepo4."
+      nominal_full_voltage:
+        li_ion: "4.2V typical"
+        lifepo4: "3.6V to 3.65V typical"
+      caution: "Charger voltage and current must match the installed chemistry; Li-ion output above about 4.25V should not be trusted."
     terminals:
       - terminal: "IN+"
         net: "tp5000_input_positive"
@@ -175,11 +177,11 @@ components:
       - terminal: "BAT-"
         net: "gnd"
     notes:
-      - "Exact TP5000 module variant and charge-current resistor are not specified in the repository."
+      - "Exact TP5000 module variant, chemistry setting, and charge-current resistor are not specified in the repository."
 
   - id: "battery"
     type: "battery"
-    part: "single 18650 Li-ion cell with holder"
+    part: "single Li-ion or LiFePO4 cell with holder"
     role: "Energy storage for sleeping weather node."
     required: true
     terminals:
@@ -188,20 +190,38 @@ components:
       - terminal: "negative"
         net: "gnd"
     firmware_binding:
-      battery_level_curve:
-        source_entity: "18650 Battery Voltage"
-        voltage_percent_points:
-          - { voltage: 3.20, percent: 0.0 }
-          - { voltage: 3.40, percent: 10.0 }
-          - { voltage: 3.58, percent: 20.0 }
-          - { voltage: 3.68, percent: 30.0 }
-          - { voltage: 3.74, percent: 40.0 }
-          - { voltage: 3.79, percent: 50.0 }
-          - { voltage: 3.85, percent: 60.0 }
-          - { voltage: 3.92, percent: 70.0 }
-          - { voltage: 4.00, percent: 80.0 }
-          - { voltage: 4.10, percent: 90.0 }
-          - { voltage: 4.16, percent: 100.0 }
+      battery_chemistry_source: "secrets.yaml battery_chemistry, generated into src/secrets_local.h"
+      battery_level_curves:
+        li_ion:
+          source_entity: "Battery Voltage"
+          voltage_percent_points:
+            - { voltage: 3.20, percent: 0.0 }
+            - { voltage: 3.40, percent: 10.0 }
+            - { voltage: 3.58, percent: 20.0 }
+            - { voltage: 3.68, percent: 30.0 }
+            - { voltage: 3.74, percent: 40.0 }
+            - { voltage: 3.79, percent: 50.0 }
+            - { voltage: 3.85, percent: 60.0 }
+            - { voltage: 3.92, percent: 70.0 }
+            - { voltage: 4.00, percent: 80.0 }
+            - { voltage: 4.10, percent: 90.0 }
+            - { voltage: 4.16, percent: 100.0 }
+        lifepo4:
+          source_entity: "Battery Voltage"
+          accuracy_note: "Voltage-only percentage is approximate because LiFePO4 has a flat discharge plateau."
+          voltage_percent_points:
+            - { voltage: 2.80, percent: 0.0 }
+            - { voltage: 3.00, percent: 5.0 }
+            - { voltage: 3.10, percent: 10.0 }
+            - { voltage: 3.18, percent: 20.0 }
+            - { voltage: 3.22, percent: 30.0 }
+            - { voltage: 3.25, percent: 40.0 }
+            - { voltage: 3.27, percent: 50.0 }
+            - { voltage: 3.28, percent: 60.0 }
+            - { voltage: 3.30, percent: 70.0 }
+            - { voltage: 3.32, percent: 80.0 }
+            - { voltage: 3.35, percent: 90.0 }
+            - { voltage: 3.45, percent: 100.0 }
 
   - id: "solar_panel"
     type: "solar_panel"
@@ -219,12 +239,14 @@ components:
   - id: "system_power_regulator"
     type: "power_regulator_or_devkit_power_input"
     part: "UNSPECIFIED"
-    role: "Provides stable power to the ESP32 dev board from the 18650/charger system."
+    role: "Provides stable power to the ESP32 dev board from the battery/charger system."
     required: true
     status: "not defined by firmware or README"
     notes:
-      - "A rebuild needs a real power path from the 18650 system to the ESP32 dev board."
-      - "Use either a suitable 3.3 V regulator feeding the ESP32 3V3 pin, or a board-supported VIN/5V input if the selected DevKit and regulator can run from the battery voltage range."
+      - "A rebuild needs a real power path from the battery system to the ESP32 dev board."
+      - "Use a low-quiescent-current 3.3 V regulator or buck-boost regulator sized for ESP32 WiFi transmit current."
+      - "Do not feed the ESP32 3.3 V rail directly from a single LiFePO4 cell; full-cell voltage can be too high and discharged-cell voltage can be too low for reliable operation."
+      - "A board-supported VIN/5V input is acceptable only if the selected DevKit regulator can run from the battery voltage range with acceptable quiescent current."
       - "Verify deep-sleep quiescent current; many DevKit boards and regulator modules waste more current than the ESP32 itself."
 
 nets:
@@ -302,7 +324,7 @@ nets:
     uncertainty: "Repository does not define whether this side is charger, cell, or load side; this orientation is the recommended rebuild starting point."
 
   - id: "battery_positive_cell"
-    role: "Single-cell 18650 positive after battery monitor shunt"
+    role: "Single-cell battery positive after battery monitor shunt"
     connections:
       - "ina226_battery.VIN-"
       - "ina226_battery.VBUS"
@@ -315,7 +337,7 @@ nets:
     connections:
       - "system_power_regulator.output_positive"
       - "mcu.power_input"
-    uncertainty: "The exact ESP32 dev board power pin is not specified. Choose 3V3, VIN, 5V, or USB according to the actual DevKit and regulator used."
+    uncertainty: "The exact ESP32 dev board power pin is not specified. Choose regulated 3V3, VIN, 5V, or USB according to the actual DevKit and regulator used. Do not connect a LiFePO4 cell directly to the 3V3 rail."
 
 logical_power_flow:
   - from: "solar_panel"
@@ -325,15 +347,15 @@ logical_power_flow:
       - "Solar Raw Voltage"
       - "Solar Panel Current"
       - "Solar Raw Power"
-  - from: "TP5000 BAT+ / 18650 positive path"
+  - from: "TP5000 BAT+ / battery positive path"
     through: "ina226_battery high-side shunt"
-    to: "18650 cell and system power regulator"
+    to: "single-cell battery and system power regulator"
     measured_entities:
-      - "18650 Battery Voltage"
-      - "18650 Battery Current"
-      - "18650 Battery Power"
-      - "18650 Battery Level"
-  - from: "18650/system power regulator"
+      - "Battery Voltage"
+      - "Battery Current"
+      - "Battery Power"
+      - "Battery Level"
+  - from: "battery/system power regulator"
     to: "ESP32 dev board and 3.3 V I2C peripherals"
     status: "regulator details unspecified"
 
@@ -352,16 +374,16 @@ firmware_entities:
       component: "sht41"
       units: "%"
   power:
-    - name: "18650 Battery Voltage"
+    - name: "Battery Voltage"
       component: "ina226_battery"
       units: "V"
-    - name: "18650 Battery Current"
+    - name: "Battery Current"
       component: "ina226_battery"
       units: "mA"
-    - name: "18650 Battery Power"
+    - name: "Battery Power"
       component: "ina226_battery"
       units: "W"
-    - name: "18650 Battery Level"
+    - name: "Battery Level"
       component: "ina226_battery"
       units: "%"
     - name: "Solar Raw Voltage"
@@ -390,9 +412,10 @@ rebuild_steps:
   - "Assemble a common 3.3 V I2C bus: ESP32 GPIO21 to all SDA pins, GPIO22 to all SCL pins, shared GND, and 3.3 V peripheral power."
   - "Configure BMP390 address to 0x77 and SHT41 address to 0x44."
   - "Configure the solar INA226 address to 0x40 and place its 0.1 ohm shunt in series with the solar panel positive lead before TP5000 IN+."
-  - "Configure the battery INA226 address to 0x41 and place its 0.1 ohm shunt in series with the 18650 positive path."
-  - "Connect TP5000 for single-cell Li-ion charging: solar monitored positive to IN+, common ground to IN-/BAT-, and charger BAT+ to the battery positive path."
-  - "Add a battery-to-ESP32 power regulator or use a board-supported power input. This is required but not specified by the current repository."
+  - "Configure battery_chemistry in secrets.yaml as li_ion or lifepo4 to match the installed cell and charger configuration."
+  - "Configure the battery INA226 address to 0x41 and place its 0.1 ohm shunt in series with the battery positive path."
+  - "Connect TP5000 for the installed single-cell chemistry: solar monitored positive to IN+, common ground to IN-/BAT-, and charger BAT+ to the battery positive path."
+  - "Add a low-quiescent-current battery-to-ESP32 3.3 V regulator or buck-boost regulator, or use a board-supported power input with acceptable quiescent current. This is required but not specified by the current repository."
   - "Flash the ESP32 target firmware with local secrets.yaml values for WiFi, MQTT, static IP, and fallback AP."
   - "Run ESPHome config validation before flashing or committing firmware changes."
   - "On first boot, watch serial logs and I2C scan output to verify devices at 0x40, 0x41, 0x44, and 0x77."
@@ -411,7 +434,9 @@ validation_targets:
   hardware_sanity_checks:
     - "I2C pull-ups are to 3.3 V, not battery or solar voltage."
     - "All sensor and monitor grounds share common ground with ESP32."
+    - "TP5000 or charger output voltage and current match the installed chemistry."
     - "TP5000 output for Li-ion charging stays at or below about 4.25 V."
+    - "No LiFePO4 cell is connected directly to the ESP32 3.3 V rail."
     - "ESP32 supply remains stable during WiFi connect and MQTT publish."
     - "Deep-sleep current is measured after assembly because DevKit boards and regulator modules can dominate battery drain."
 

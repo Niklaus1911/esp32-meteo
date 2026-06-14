@@ -57,6 +57,8 @@ constexpr size_t kMqttMaxHeaderBytes = 5;
 constexpr float kInaShuntOhms = 0.1f;
 constexpr float kSolarMaxCurrentA = 1.0f;
 constexpr float kBatteryMaxCurrentA = 0.8f;
+constexpr uint8_t kBatteryChemistryLiIon = 0;
+constexpr uint8_t kBatteryChemistryLiFePO4 = 1;
 
 // Set true during local serial/MQTT testing to keep the device awake without a retained MQTT command.
 // Keep false for production so the node returns to deep sleep unless MQTT explicitly requests stay-awake.
@@ -67,11 +69,23 @@ struct BatteryCurvePoint {
   float percent;
 };
 
-constexpr BatteryCurvePoint kBatteryCurve[] = {
+struct BatteryCurve {
+  const BatteryCurvePoint* points;
+  size_t pointCount;
+};
+
+constexpr BatteryCurvePoint kLiIonBatteryCurve[] = {
     {3.20f, 0.0f},   {3.40f, 10.0f},  {3.58f, 20.0f},
     {3.68f, 30.0f},  {3.74f, 40.0f},  {3.79f, 50.0f},
     {3.85f, 60.0f},  {3.92f, 70.0f},  {4.00f, 80.0f},
     {4.10f, 90.0f},  {4.16f, 100.0f},
+};
+
+constexpr BatteryCurvePoint kLiFePO4BatteryCurve[] = {
+    {2.80f, 0.0f},   {3.00f, 5.0f},   {3.10f, 10.0f},
+    {3.18f, 20.0f},  {3.22f, 30.0f},  {3.25f, 40.0f},
+    {3.27f, 50.0f},  {3.28f, 60.0f},  {3.30f, 70.0f},
+    {3.32f, 80.0f},  {3.35f, 90.0f},  {3.45f, 100.0f},
 };
 
 struct DeviceState {
@@ -126,6 +140,7 @@ uint32_t lastPublishMs = 0;
 void publishHomeAssistantDiscovery();
 void flushMqtt(uint32_t durationMs);
 void waitForRetainedStayAwakeCommand();
+BatteryCurve activeBatteryCurve();
 
 void logPhase(const char* phase) {
   Serial.println();
@@ -451,24 +466,35 @@ float batteryLevelPercent(float voltage) {
   if (isnan(voltage)) {
     return NAN;
   }
-  if (voltage <= kBatteryCurve[0].voltage) {
+
+  const BatteryCurve curve = activeBatteryCurve();
+  if (voltage <= curve.points[0].voltage) {
     return 0.0f;
   }
 
-  constexpr size_t pointCount = sizeof(kBatteryCurve) / sizeof(kBatteryCurve[0]);
-  if (voltage >= kBatteryCurve[pointCount - 1].voltage) {
+  if (voltage >= curve.points[curve.pointCount - 1].voltage) {
     return 100.0f;
   }
 
-  for (size_t i = 1; i < pointCount; ++i) {
-    const BatteryCurvePoint& lower = kBatteryCurve[i - 1];
-    const BatteryCurvePoint& upper = kBatteryCurve[i];
+  for (size_t i = 1; i < curve.pointCount; ++i) {
+    const BatteryCurvePoint& lower = curve.points[i - 1];
+    const BatteryCurvePoint& upper = curve.points[i];
     if (voltage <= upper.voltage) {
       const float ratio = (voltage - lower.voltage) / (upper.voltage - lower.voltage);
       return lower.percent + ratio * (upper.percent - lower.percent);
     }
   }
   return 100.0f;
+}
+
+BatteryCurve activeBatteryCurve() {
+  if (BATTERY_CHEMISTRY_ID == kBatteryChemistryLiFePO4) {
+    return {kLiFePO4BatteryCurve, sizeof(kLiFePO4BatteryCurve) / sizeof(kLiFePO4BatteryCurve[0])};
+  }
+  if (BATTERY_CHEMISTRY_ID == kBatteryChemistryLiIon) {
+    return {kLiIonBatteryCurve, sizeof(kLiIonBatteryCurve) / sizeof(kLiIonBatteryCurve[0])};
+  }
+  return {kLiIonBatteryCurve, sizeof(kLiIonBatteryCurve) / sizeof(kLiIonBatteryCurve[0])};
 }
 
 void logIna226ReadDiagnostics(INA226_WE& monitor, const char* name) {
@@ -523,7 +549,8 @@ Reading readSensors() {
     reading.batteryCurrentMa = batteryIna.getCurrent_mA();
     reading.batteryPowerW = batteryIna.getBusPower() / 1000.0f;
     reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
-    Serial.printf("Battery INA226: voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
+    Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
+                  BATTERY_CHEMISTRY_NAME,
                   reading.batteryVoltageV,
                   reading.batteryCurrentMa,
                   reading.batteryPowerW,
@@ -1059,6 +1086,13 @@ void publishHomeAssistantDiscovery() {
                            "",
                            "",
                            "diagnostic");
+  publishHaSensorDiscovery("esp32_meteo_v3_battery_chemistry",
+                           "Battery Chemistry",
+                           topic("/diagnostic/battery_chemistry").c_str(),
+                           "",
+                           "",
+                           "",
+                           "diagnostic");
   publishHaSensorDiscovery("esp32_meteo_v3_status",
                            "Status",
                            kStatusTopic,
@@ -1089,6 +1123,7 @@ void publishDiagnostics() {
   const String ipAddress = WiFi.localIP().toString();
   publishText("/diagnostic/ip_address", ipAddress.c_str());
   publishText("/diagnostic/reset_reason", resetReasonName(esp_reset_reason()));
+  publishText("/diagnostic/battery_chemistry", BATTERY_CHEMISTRY_NAME);
 
   char sensorReadiness[160];
   if (formatInto(sensorReadiness,
@@ -1298,11 +1333,14 @@ void appSetup() {
   Serial.printf("%s boot\n", kFirmwareName);
   Serial.printf("Reset reason: %s\n", resetReasonName(esp_reset_reason()));
   Serial.printf("MQTT topic prefix: %s\n", kTopicPrefix);
+  Serial.printf("Battery chemistry: %s (%s)\n", BATTERY_CHEMISTRY_NAME, BATTERY_CHEMISTRY_KEY);
   Serial.printf("Stay-awake publish interval: %lu ms\n", static_cast<unsigned long>(kStayAwakePublishIntervalMs));
   Serial.printf("Default deep sleep: %llu seconds\n", kDeepSleepSeconds);
   Serial.printf("Local force stay-awake flag: %s\n", kForceStayAwakeForTesting ? "enabled" : "disabled");
   Serial.println("Safety: I2C pullups must be tied to 3.3 V only.");
-  Serial.println("Safety: TP5000 Li-ion output above about 4.25 V is unsafe/untrusted.");
+  Serial.println("Safety: charger chemistry, charge voltage, charge current, and protection must match the installed cell.");
+  Serial.println("Safety: Li-ion charger output above about 4.25 V is unsafe/untrusted.");
+  Serial.println("Safety: do not power the ESP32 3.3 V rail directly from LiFePO4; use a low-Iq regulator or buck-boost.");
   Serial.println("Safety: solar panel rating, TP5000 variant, charge current, and ESP32 regulator behavior are not assumed.");
 
   Wire.begin(kI2cSdaPin, kI2cSclPin);
