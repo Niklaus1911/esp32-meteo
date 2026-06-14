@@ -80,6 +80,10 @@ struct DeviceState {
   bool batteryInaReady = false;
   bool sht41Ready = false;
   bool bmp390Ready = false;
+  const char* solarInaIssue = nullptr;
+  const char* batteryInaIssue = nullptr;
+  const char* sht41Issue = nullptr;
+  const char* bmp390Issue = nullptr;
 };
 
 struct Reading {
@@ -258,6 +262,7 @@ void configureBmp390AfterInit() {
 
 void initializeBmp390() {
   devices.bmp390Ready = false;
+  devices.bmp390Issue = nullptr;
 
   for (uint8_t attempt = 1; attempt <= kBmp390InitAttempts; ++attempt) {
     devices.bmp390Present = i2cAddressPresent(kBmp390Address);
@@ -273,6 +278,7 @@ void initializeBmp390() {
                     kBmp390InitAttempts);
       devices.bmp390Ready = bmp.begin_I2C(kBmp390Address, &Wire);
       if (devices.bmp390Ready) {
+        devices.bmp390Issue = nullptr;
         configureBmp390AfterInit();
         return;
       }
@@ -287,8 +293,10 @@ void initializeBmp390() {
   }
 
   if (!devices.bmp390Present) {
+    devices.bmp390Issue = "bmp3xx_missing";
     Serial.printf("Skipping BMP390/BMP3xx init because 0x%02X is missing after retries\n", kBmp390Address);
   } else {
+    devices.bmp390Issue = "bmp3xx_init_failed";
     Serial.println("BMP390/BMP3xx initialization failed after retries");
   }
 }
@@ -301,13 +309,16 @@ void initializeSensors() {
     Serial.printf("Initializing SHT41/SHT4x at 0x%02X\n", kSht41Address);
     devices.sht41Ready = sht4.begin(&Wire);
     if (devices.sht41Ready) {
+      devices.sht41Issue = nullptr;
       sht4.setPrecision(SHT4X_HIGH_PRECISION);
       sht4.setHeater(SHT4X_NO_HEATER);
       Serial.println("SHT41/SHT4x initialized with high precision and heater off");
     } else {
+      devices.sht41Issue = "sht4x_init_failed";
       Serial.println("SHT41/SHT4x initialization failed");
     }
   } else {
+    devices.sht41Issue = "sht4x_missing";
     Serial.printf("Skipping SHT41/SHT4x init because 0x%02X is missing\n", kSht41Address);
   }
 
@@ -318,13 +329,16 @@ void initializeSensors() {
                   kSolarMaxCurrentA);
     devices.solarInaReady = solarIna.init();
     if (devices.solarInaReady) {
+      devices.solarInaIssue = nullptr;
       solarIna.setResistorRange(kInaShuntOhms, kSolarMaxCurrentA);
       solarIna.waitUntilConversionCompleted();
       Serial.println("Solar INA226 initialized");
     } else {
+      devices.solarInaIssue = "solar_ina226_init_failed";
       Serial.println("Solar INA226 initialization failed");
     }
   } else {
+    devices.solarInaIssue = "solar_ina226_missing";
     Serial.printf("Skipping solar INA226 init because 0x%02X is missing\n", kSolarInaAddress);
   }
 
@@ -335,13 +349,16 @@ void initializeSensors() {
                   kBatteryMaxCurrentA);
     devices.batteryInaReady = batteryIna.init();
     if (devices.batteryInaReady) {
+      devices.batteryInaIssue = nullptr;
       batteryIna.setResistorRange(kInaShuntOhms, kBatteryMaxCurrentA);
       batteryIna.waitUntilConversionCompleted();
       Serial.println("Battery INA226 initialized");
     } else {
+      devices.batteryInaIssue = "battery_ina226_init_failed";
       Serial.println("Battery INA226 initialization failed");
     }
   } else {
+    devices.batteryInaIssue = "battery_ina226_missing";
     Serial.printf("Skipping battery INA226 init because 0x%02X is missing\n", kBatteryInaAddress);
   }
 
@@ -381,6 +398,17 @@ float batteryLevelPercent(float voltage) {
   return 100.0f;
 }
 
+void logIna226ReadDiagnostics(INA226_WE& monitor, const char* name) {
+  monitor.readAndClearFlags();
+  if (monitor.overflow) {
+    Serial.printf("%s INA226 diagnostic: math overflow flag was set\n", name);
+  }
+  const uint8_t i2cError = monitor.getI2cErrorCode();
+  if (i2cError != 0) {
+    Serial.printf("%s INA226 diagnostic: I2C error code %u while reading flags\n", name, i2cError);
+  }
+}
+
 Reading readSensors() {
   logPhase("Sensor read");
   Reading reading;
@@ -416,6 +444,7 @@ Reading readSensors() {
   }
 
   if (devices.batteryInaReady) {
+    logIna226ReadDiagnostics(batteryIna, "Battery");
     // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
     reading.batteryVoltageV = batteryIna.getBusVoltage_V();
     reading.batteryCurrentMa = batteryIna.getCurrent_mA();
@@ -431,6 +460,7 @@ Reading readSensors() {
   }
 
   if (devices.solarInaReady) {
+    logIna226ReadDiagnostics(solarIna, "Solar");
     // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
     reading.solarRawVoltageV = solarIna.getBusVoltage_V();
     reading.solarPanelCurrentMa = solarIna.getCurrent_mA();
@@ -955,23 +985,25 @@ void publishDiagnostics() {
   publishText("/diagnostic/ip_address", ipAddress.c_str());
 }
 
+void appendDegradedIssue(String& status, bool& degraded, const char* issue) {
+  if (!issue || !issue[0]) {
+    return;
+  }
+  if (!degraded) {
+    status += "; degraded:";
+    degraded = true;
+  }
+  status += ' ';
+  status += issue;
+}
+
 void publishDeviceStatus() {
   String status = "online";
-  if (!devices.solarInaReady || !devices.batteryInaReady || !devices.sht41Ready || !devices.bmp390Ready) {
-    status += "; degraded:";
-    if (!devices.solarInaReady) {
-      status += " solar_ina226";
-    }
-    if (!devices.batteryInaReady) {
-      status += " battery_ina226";
-    }
-    if (!devices.sht41Ready) {
-      status += " sht4x";
-    }
-    if (!devices.bmp390Ready) {
-      status += " bmp3xx";
-    }
-  }
+  bool degraded = false;
+  appendDegradedIssue(status, degraded, devices.solarInaIssue);
+  appendDegradedIssue(status, degraded, devices.batteryInaIssue);
+  appendDegradedIssue(status, degraded, devices.sht41Issue);
+  appendDegradedIssue(status, degraded, devices.bmp390Issue);
   const bool ok = mqttClient.publish(kStatusTopic, status.c_str(), true);
   Serial.printf("MQTT publish %s = %s retained: %s\n", kStatusTopic, status.c_str(), ok ? "ok" : "FAILED");
 }
