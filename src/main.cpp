@@ -38,8 +38,11 @@ constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
 constexpr uint32_t kWifiConnectTimeoutMs = 20UL * 1000UL;
 constexpr uint32_t kMqttConnectTimeoutMs = 10UL * 1000UL;
 constexpr uint32_t kRetainedCommandWaitMs = 5000;
-constexpr uint32_t kMqttFlushMs = 1500;
 constexpr uint32_t kTelemetryFlushMs = 750;
+constexpr uint32_t kPostTelemetryAwakeMs = 10UL * 1000UL;
+constexpr uint32_t kSleepStatusConfirmTimeoutMs = 3000;
+constexpr uint8_t kSleepStatusConfirmAttempts = 3;
+constexpr uint32_t kPostSleepStatusGraceMs = 3000;
 constexpr uint32_t kWifiRetryDelayMs = 250;
 constexpr uint32_t kMqttRetryDelayMs = 500;
 constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
@@ -112,6 +115,12 @@ bool stayAwakeRequested = false;
 bool stayAwakeCommandReceived = false;
 bool homeAssistantDiscoveryRequested = false;
 bool otaInProgress = false;
+bool telemetryPublishCompleted = false;
+bool statusConfirmationPending = false;
+bool statusConfirmationReceived = false;
+bool statusConfirmationSubscribed = false;
+const char* statusConfirmationExpected = nullptr;
+uint32_t telemetryPublishCompletedMs = 0;
 uint32_t lastPublishMs = 0;
 
 void publishHomeAssistantDiscovery();
@@ -166,6 +175,70 @@ String topic(const char* suffix) {
   String full(kTopicPrefix);
   full += suffix;
   return full;
+}
+
+bool payloadEquals(const byte* payload, unsigned int length, const char* expected) {
+  if (!expected) {
+    return false;
+  }
+  const size_t expectedLength = strlen(expected);
+  if (length != expectedLength) {
+    return false;
+  }
+  for (unsigned int i = 0; i < length; ++i) {
+    if (payload[i] != static_cast<byte>(expected[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void markTelemetryPublishCompleted() {
+  telemetryPublishCompleted = true;
+  telemetryPublishCompletedMs = millis();
+  Serial.printf("Telemetry publish completed at %lu ms; post-telemetry awake window starts now\n",
+                static_cast<unsigned long>(telemetryPublishCompletedMs));
+}
+
+void serviceMqttAndOta() {
+  ArduinoOTA.handle();
+  mqttClient.loop();
+}
+
+void waitWithMqttAndOta(uint32_t durationMs, const char* description) {
+  if (durationMs == 0) {
+    return;
+  }
+
+  Serial.printf("%s for %lu ms\n", description, static_cast<unsigned long>(durationMs));
+  const uint32_t started = millis();
+  while (millis() - started < durationMs) {
+    serviceMqttAndOta();
+    delay(10);
+  }
+  Serial.printf("%s complete\n", description);
+}
+
+void waitForPostTelemetryAwakeWindow() {
+  if (!telemetryPublishCompleted) {
+    Serial.println("Telemetry publish was not completed; skipping post-telemetry awake wait");
+    return;
+  }
+
+  const uint32_t elapsedMs = millis() - telemetryPublishCompletedMs;
+  if (elapsedMs >= kPostTelemetryAwakeMs) {
+    Serial.printf("Post-telemetry awake window already satisfied: %lu/%lu ms\n",
+                  static_cast<unsigned long>(elapsedMs),
+                  static_cast<unsigned long>(kPostTelemetryAwakeMs));
+    return;
+  }
+
+  const uint32_t remainingMs = kPostTelemetryAwakeMs - elapsedMs;
+  Serial.printf("Waiting %lu ms to complete post-telemetry awake window (%lu/%lu ms elapsed)\n",
+                static_cast<unsigned long>(remainingMs),
+                static_cast<unsigned long>(elapsedMs),
+                static_cast<unsigned long>(kPostTelemetryAwakeMs));
+  waitWithMqttAndOta(remainingMs, "Post-telemetry awake window wait");
 }
 
 const char* resetReasonName(esp_reset_reason_t reason) {
@@ -642,6 +715,21 @@ void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
     return;
   }
 
+  if (strcmp(receivedTopic, kStatusTopic) == 0) {
+    if (statusConfirmationPending && payloadEquals(payload, length, statusConfirmationExpected)) {
+      statusConfirmationReceived = true;
+      Serial.printf("MQTT status confirmation received on %s: %s\n",
+                    kStatusTopic,
+                    statusConfirmationExpected);
+    } else if (statusConfirmationPending) {
+      Serial.printf("MQTT status confirmation ignored on %s: payload length=%u, expected=%s\n",
+                    kStatusTopic,
+                    length,
+                    statusConfirmationExpected ? statusConfirmationExpected : "(none)");
+    }
+    return;
+  }
+
   if (strcmp(receivedTopic, kStayAwakeTopic) != 0) {
     return;
   }
@@ -1056,32 +1144,102 @@ void publishReadings() {
   publishDiagnostics();
   publishDeviceStatus();
   flushMqtt(kTelemetryFlushMs);
+  markTelemetryPublishCompleted();
 }
 
 void flushMqtt(uint32_t durationMs) {
   Serial.printf("Flushing MQTT for %lu ms\n", static_cast<unsigned long>(durationMs));
   const uint32_t started = millis();
   while (millis() - started < durationMs) {
-    ArduinoOTA.handle();
-    mqttClient.loop();
+    serviceMqttAndOta();
     delay(10);
   }
   Serial.println("MQTT flush complete");
+}
+
+bool publishRetainedStatusAndWaitForEcho(const char* payload, uint32_t timeoutMs) {
+  statusConfirmationExpected = payload;
+  statusConfirmationReceived = false;
+  statusConfirmationPending = true;
+
+  const bool statusOk = mqttClient.publish(kStatusTopic, payload, true);
+  Serial.printf("MQTT publish %s = %s retained: %s\n",
+                kStatusTopic,
+                payload,
+                statusOk ? "ok" : "FAILED");
+  if (!statusOk) {
+    statusConfirmationPending = false;
+    statusConfirmationExpected = nullptr;
+    return false;
+  }
+
+  if (!statusConfirmationSubscribed) {
+    const bool subscribed = mqttClient.subscribe(kStatusTopic, 0);
+    Serial.printf("MQTT subscribe %s qos=0 for status confirmation: %s\n",
+                  kStatusTopic,
+                  subscribed ? "ok" : "FAILED");
+    statusConfirmationSubscribed = subscribed;
+    if (!subscribed) {
+      statusConfirmationPending = false;
+      statusConfirmationExpected = nullptr;
+      return false;
+    }
+  }
+
+  Serial.printf("Waiting up to %lu ms for broker echo of %s = %s\n",
+                static_cast<unsigned long>(timeoutMs),
+                kStatusTopic,
+                payload);
+  const uint32_t started = millis();
+  while (!statusConfirmationReceived && mqttClient.connected() && millis() - started < timeoutMs) {
+    serviceMqttAndOta();
+    delay(10);
+  }
+
+  const bool confirmed = statusConfirmationReceived;
+  statusConfirmationPending = false;
+  statusConfirmationExpected = nullptr;
+  Serial.printf("MQTT broker echo for %s = %s: %s\n",
+                kStatusTopic,
+                payload,
+                confirmed ? "confirmed" : "not confirmed");
+  return confirmed;
+}
+
+bool publishSleepStatusWithConfirmation() {
+  for (uint8_t attempt = 1; attempt <= kSleepStatusConfirmAttempts; ++attempt) {
+    Serial.printf("Publishing sleeping status with broker confirmation, attempt %u/%u\n",
+                  attempt,
+                  kSleepStatusConfirmAttempts);
+    if (publishRetainedStatusAndWaitForEcho("sleeping", kSleepStatusConfirmTimeoutMs)) {
+      return true;
+    }
+
+    if (attempt < kSleepStatusConfirmAttempts) {
+      waitWithMqttAndOta(kMqttRetryDelayMs, "Sleeping status confirmation retry wait");
+    }
+  }
+
+  Serial.println("WARNING: MQTT broker did not confirm retained sleeping status; sleeping anyway to protect battery");
+  return false;
 }
 
 void sleepForDefaultInterval(const char* reason) {
   logPhase("Deep sleep");
   while (otaInProgress) {
     Serial.println("OTA update in progress; delaying deep sleep");
-    ArduinoOTA.handle();
-    mqttClient.loop();
+    serviceMqttAndOta();
     delay(100);
   }
-  Serial.printf("Entering deep sleep for %llu seconds: %s\n", kDeepSleepSeconds, reason);
+
+  Serial.printf("Preparing deep sleep for %llu seconds: %s\n", kDeepSleepSeconds, reason);
+  waitForPostTelemetryAwakeWindow();
+
   if (mqttClient.connected()) {
-    const bool statusOk = mqttClient.publish(kStatusTopic, "sleeping", true);
-    Serial.printf("MQTT publish %s = sleeping retained: %s\n", kStatusTopic, statusOk ? "ok" : "FAILED");
-    flushMqtt(kMqttFlushMs);
+    const bool sleepStatusConfirmed = publishSleepStatusWithConfirmation();
+    if (sleepStatusConfirmed) {
+      waitWithMqttAndOta(kPostSleepStatusGraceMs, "Post-sleep-status MQTT grace period");
+    }
     mqttClient.disconnect();
     Serial.println("MQTT disconnected");
   } else {
@@ -1092,6 +1250,7 @@ void sleepForDefaultInterval(const char* reason) {
   Serial.println("WiFi disconnected and radio turned off");
   esp_sleep_enable_timer_wakeup(kDeepSleepSeconds * 1000000ULL);
   Serial.println("Deep-sleep timer configured");
+  Serial.printf("Entering deep sleep for %llu seconds now\n", kDeepSleepSeconds);
   Serial.flush();
   esp_deep_sleep_start();
 }
