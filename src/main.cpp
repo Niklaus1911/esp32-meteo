@@ -51,6 +51,9 @@ constexpr uint32_t kBmp390InitRetryDelayMs = 1000;
 constexpr uint32_t kBmp390WarmupDiscardDelayMs = 250;
 constexpr uint32_t kBeforeFirstReadDelayMs = 500;
 constexpr uint8_t kBmp390InitAttempts = 3;
+constexpr uint32_t kCpuFrequencyMhz = 80;
+constexpr wifi_power_t kWifiTxPower = WIFI_POWER_11dBm;
+constexpr const char* kWifiTxPowerLabel = "11 dBm";
 constexpr size_t kMqttBufferSize = 2048;
 constexpr size_t kMqttMaxHeaderBytes = 5;
 
@@ -637,6 +640,8 @@ bool connectWifi() {
   logPhase("WiFi");
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
+  WiFi.setTxPower(kWifiTxPower);
+  Serial.printf("WiFi TX power requested: %s\n", kWifiTxPowerLabel);
   configureStaticWifiIp();
 
   Serial.println("WiFi credentials loaded from generated header");
@@ -1328,9 +1333,13 @@ void waitForRetainedStayAwakeCommand() {
 void appSetup() {
   Serial.begin(kSerialBaud);
   delay(200);
+  setCpuFrequencyMhz(kCpuFrequencyMhz);
 
   Serial.println();
   Serial.printf("%s boot\n", kFirmwareName);
+  Serial.printf("CPU frequency requested: %lu MHz, active: %u MHz\n",
+                static_cast<unsigned long>(kCpuFrequencyMhz),
+                getCpuFrequencyMhz());
   Serial.printf("Reset reason: %s\n", resetReasonName(esp_reset_reason()));
   Serial.printf("MQTT topic prefix: %s\n", kTopicPrefix);
   Serial.printf("Battery chemistry: %s (%s)\n", BATTERY_CHEMISTRY_NAME, BATTERY_CHEMISTRY_KEY);
