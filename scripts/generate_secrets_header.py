@@ -53,6 +53,29 @@ def optional_present(values, names):
     return ""
 
 
+def first_present_with_legacy(values, canonical_name, legacy_name, public_name):
+    canonical_value = optional_present(values, (canonical_name,))
+    legacy_value = optional_present(values, (legacy_name,))
+
+    if canonical_value and legacy_value:
+        if canonical_value != legacy_value:
+            raise ValueError(
+                f"{canonical_name} and legacy {legacy_name} are both set but differ; "
+                f"keep {canonical_name} as the canonical value or make both values identical"
+            )
+        return canonical_value
+
+    if canonical_value:
+        return canonical_value
+
+    if legacy_value:
+        return legacy_value
+
+    raise ValueError(
+        f"Missing required secret for {public_name}; expected {canonical_name} "
+        f"or legacy {legacy_name}"
+    )
+
 def battery_chemistry_config(value):
     normalized = value.strip().lower().replace("-", "_") if value else "li_ion"
     chemistries = {
@@ -97,9 +120,11 @@ def generate_header():
 
     values = parse_flat_yaml(SECRETS_FILE)
 
-    wifi_primary_ssid = first_present(values, ("wifi_ssid", "wifi_primary_ssid"), "WIFI_PRIMARY_SSID")
-    wifi_primary_password = first_present(
-        values, ("wifi_password", "wifi_primary_password"), "WIFI_PASSWORD"
+    wifi_primary_ssid = first_present_with_legacy(
+        values, "wifi_primary_ssid", "wifi_ssid", "WIFI_PRIMARY_SSID"
+    )
+    wifi_primary_password = first_present_with_legacy(
+        values, "wifi_primary_password", "wifi_password", "WIFI_PASSWORD"
     )
     wifi_backup_ssid = optional_present(values, ("wifi_backup_ssid",))
     wifi_backup_password = optional_present(values, ("wifi_backup_password",))
@@ -110,6 +135,12 @@ def generate_header():
 
     if bool(wifi_backup_ssid) != bool(wifi_backup_password):
         raise ValueError("wifi_backup_ssid and wifi_backup_password must be provided together")
+
+    if wifi_backup_ssid == wifi_primary_ssid and wifi_backup_password == wifi_primary_password:
+        raise ValueError(
+            "wifi_backup_ssid and wifi_backup_password match the primary WiFi credentials; "
+            "remove the backup keys or configure a real second AP"
+        )
 
     if bool(wifi_static_ip) != bool(wifi_gateway):
         raise ValueError("wifi_static_ip and wifi_gateway must be provided together")
