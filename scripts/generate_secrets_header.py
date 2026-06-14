@@ -105,6 +105,8 @@ def generate_header():
     wifi_backup_password = optional_present(values, ("wifi_backup_password",))
     wifi_static_ip = optional_present(values, ("wifi_static_ip",))
     wifi_gateway = optional_present(values, ("wifi_gateway",))
+    esp32c3_wifi_static_ip = optional_present(values, ("esp32c3_wifi_static_ip",))
+    esp32c3_wifi_gateway = optional_present(values, ("esp32c3_wifi_gateway",))
 
     if bool(wifi_backup_ssid) != bool(wifi_backup_password):
         raise ValueError("wifi_backup_ssid and wifi_backup_password must be provided together")
@@ -112,9 +114,16 @@ def generate_header():
     if bool(wifi_static_ip) != bool(wifi_gateway):
         raise ValueError("wifi_static_ip and wifi_gateway must be provided together")
 
+    if bool(esp32c3_wifi_static_ip) != bool(esp32c3_wifi_gateway):
+        raise ValueError("esp32c3_wifi_static_ip and esp32c3_wifi_gateway must be provided together")
+
     if wifi_static_ip:
         validate_ipv4(wifi_static_ip, "wifi_static_ip")
         validate_ipv4(wifi_gateway, "wifi_gateway")
+
+    if esp32c3_wifi_static_ip:
+        validate_ipv4(esp32c3_wifi_static_ip, "esp32c3_wifi_static_ip")
+        validate_ipv4(esp32c3_wifi_gateway, "esp32c3_wifi_gateway")
 
     mqtt_host = first_present(values, ("mqtt_host", "mqtt_broker"), "MQTT_HOST")
     mqtt_port_raw = first_present(values, ("mqtt_port",), "MQTT_PORT")
@@ -147,16 +156,18 @@ def generate_header():
                 f"static constexpr const char* WIFI_BACKUP_PASSWORD = {cpp_string(wifi_backup_password)};",
                 f"static constexpr const char* WIFI_STATIC_IP = {cpp_string(wifi_static_ip)};",
                 f"static constexpr const char* WIFI_GATEWAY = {cpp_string(wifi_gateway)};",
+                f"static constexpr const char* ESP32C3_WIFI_STATIC_IP = {cpp_string(esp32c3_wifi_static_ip)};",
+                f"static constexpr const char* ESP32C3_WIFI_GATEWAY = {cpp_string(esp32c3_wifi_gateway)};",
                 'static constexpr const char* WIFI_SUBNET = "255.255.255.0";',
                 f"static constexpr bool WIFI_HAS_BACKUP = {'true' if wifi_backup_ssid else 'false'};",
                 f"static constexpr bool WIFI_HAS_STATIC_IP = {'true' if wifi_static_ip else 'false'};",
+                f"static constexpr bool ESP32C3_WIFI_HAS_STATIC_IP = {'true' if esp32c3_wifi_static_ip else 'false'};",
                 "static constexpr const char* WIFI_SSID = WIFI_PRIMARY_SSID;",
                 "static constexpr const char* WIFI_PASSWORD = WIFI_PRIMARY_PASSWORD;",
                 f"static constexpr const char* MQTT_HOST = {cpp_string(mqtt_host)};",
                 f"static constexpr uint16_t MQTT_PORT = {mqtt_port};",
                 f"static constexpr const char* MQTT_USERNAME = {cpp_string(mqtt_username)};",
                 f"static constexpr const char* MQTT_PASSWORD = {cpp_string(mqtt_password)};",
-                'static constexpr const char* OTA_HOSTNAME = "esp32-meteo-v3";',
                 f"static constexpr const char* OTA_PASSWORD = {cpp_string(ota_password)};",
                 f"static constexpr uint8_t BATTERY_CHEMISTRY_ID = {battery_chemistry_id};",
                 f"static constexpr const char* BATTERY_CHEMISTRY_KEY = {cpp_string(battery_chemistry_key)};",

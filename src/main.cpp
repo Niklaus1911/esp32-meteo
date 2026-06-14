@@ -11,27 +11,79 @@
 
 #include "secrets_local.h"
 
+#define ESP32_METEO_MODEL_ESP32_DEVKIT "ESP32 DevKit weather node"
+#define ESP32_METEO_MODEL_ESP32C3_DEVKITM1 "ESP32-C3 DevKitM-1 weather node"
+#define ESP32_METEO_TOPIC_PREFIX_ESP32 "esp32-meteo-v3"
+#define ESP32_METEO_TOPIC_PREFIX_C3 "esp32-meteo-c3"
+#define ESP32_METEO_HA_UNIQUE_PREFIX_ESP32 "esp32_meteo_v3"
+#define ESP32_METEO_HA_UNIQUE_PREFIX_C3 "esp32_meteo_c3"
+#define ESP32_METEO_HA_DEVICE_NAME_ESP32 "ESP32 Meteo V3"
+#define ESP32_METEO_HA_DEVICE_NAME_C3 "ESP32 Meteo C3"
+
+#ifdef ESP32_METEO_TARGET_C3
+#define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_C3
+#define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/status"
+#define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/control/stay_awake"
+#define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_C3
+#define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_C3
+#define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_C3
+#define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_C3
+#define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32C3_DEVKITM1
+#define ESP32_METEO_WIFI_STATIC_IP ESP32C3_WIFI_STATIC_IP
+#define ESP32_METEO_WIFI_GATEWAY ESP32C3_WIFI_GATEWAY
+#define ESP32_METEO_WIFI_HAS_STATIC_IP ESP32C3_WIFI_HAS_STATIC_IP
+#else
+#define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_ESP32
+#define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/status"
+#define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/control/stay_awake"
+#define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_ESP32
+#define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_ESP32
+#define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_ESP32
+#define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_ESP32
+#define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32_DEVKIT
+#define ESP32_METEO_WIFI_STATIC_IP WIFI_STATIC_IP
+#define ESP32_METEO_WIFI_GATEWAY WIFI_GATEWAY
+#define ESP32_METEO_WIFI_HAS_STATIC_IP WIFI_HAS_STATIC_IP
+#endif
+
+#ifndef ESP32_METEO_I2C_SDA_PIN
+#define ESP32_METEO_I2C_SDA_PIN 21
+#endif
+
+#ifndef ESP32_METEO_I2C_SCL_PIN
+#define ESP32_METEO_I2C_SCL_PIN 22
+#endif
+
+#ifndef ESP32_METEO_HA_MODEL
+#define ESP32_METEO_HA_MODEL ESP32_METEO_DEFAULT_HA_MODEL
+#endif
+
 namespace {
 
 constexpr uint32_t kSerialBaud = 115200;
-constexpr uint8_t kI2cSdaPin = 21;
-constexpr uint8_t kI2cSclPin = 22;
+constexpr uint8_t kI2cSdaPin = static_cast<uint8_t>(ESP32_METEO_I2C_SDA_PIN);
+constexpr uint8_t kI2cSclPin = static_cast<uint8_t>(ESP32_METEO_I2C_SCL_PIN);
 
 constexpr uint8_t kSolarInaAddress = 0x40;
 constexpr uint8_t kBatteryInaAddress = 0x41;
 constexpr uint8_t kSht41Address = 0x44;
 constexpr uint8_t kBmp390Address = 0x77;
 
-constexpr const char* kFirmwareName = "esp32-meteo-v3";
-constexpr const char* kTopicPrefix = "esp32-meteo-v3";
-constexpr const char* kStayAwakeTopic = "esp32-meteo-v3/control/stay_awake";
-constexpr const char* kStatusTopic = "esp32-meteo-v3/status";
+constexpr const char* kFirmwareName = ESP32_METEO_TOPIC_PREFIX;
+constexpr const char* kTopicPrefix = ESP32_METEO_TOPIC_PREFIX;
+constexpr const char* kStayAwakeTopic = ESP32_METEO_STAY_AWAKE_TOPIC;
+constexpr const char* kStatusTopic = ESP32_METEO_STATUS_TOPIC;
 constexpr const char* kHaDiscoveryPrefix = "homeassistant";
 constexpr const char* kHaStatusTopic = "homeassistant/status";
-constexpr const char* kHaDeviceIdentifier = "esp32-meteo-v3";
-constexpr const char* kHaDeviceName = "ESP32 Meteo V3";
+constexpr const char* kHaDeviceIdentifier = ESP32_METEO_HA_DEVICE_IDENTIFIER;
+constexpr const char* kHaDeviceName = ESP32_METEO_HA_DEVICE_NAME;
 constexpr const char* kHaManufacturer = "DIY";
-constexpr const char* kHaModel = "ESP32 DevKit weather node";
+constexpr const char* kHaModel = ESP32_METEO_HA_MODEL;
+constexpr const char* kHaUniqueIdPrefix = ESP32_METEO_HA_UNIQUE_PREFIX;
+constexpr const char* kOtaHostname = ESP32_METEO_OTA_HOSTNAME;
+constexpr const char* kWifiStaticIp = ESP32_METEO_WIFI_STATIC_IP;
+constexpr const char* kWifiGateway = ESP32_METEO_WIFI_GATEWAY;
+constexpr bool kWifiHasStaticIp = ESP32_METEO_WIFI_HAS_STATIC_IP;
 
 constexpr uint64_t kDeepSleepSeconds = 10ULL * 60ULL;
 constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
@@ -580,7 +632,7 @@ Reading readSensors() {
 }
 
 bool configureStaticWifiIp() {
-  if (!WIFI_HAS_STATIC_IP) {
+  if (!kWifiHasStaticIp) {
     Serial.println("WiFi static IP not configured; using DHCP");
     return true;
   }
@@ -589,7 +641,7 @@ bool configureStaticWifiIp() {
   IPAddress gateway;
   IPAddress subnet;
 
-  if (!localIp.fromString(WIFI_STATIC_IP) || !gateway.fromString(WIFI_GATEWAY) || !subnet.fromString(WIFI_SUBNET)) {
+  if (!localIp.fromString(kWifiStaticIp) || !gateway.fromString(kWifiGateway) || !subnet.fromString(WIFI_SUBNET)) {
     Serial.println("WiFi static IP constants are invalid; falling back to DHCP");
     return false;
   }
@@ -660,7 +712,7 @@ bool connectWifi() {
 
 void initializeOta() {
   logPhase("OTA");
-  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.setHostname(kOtaHostname);
   ArduinoOTA.setPassword(OTA_PASSWORD);
 
   ArduinoOTA.onStart([]() {
@@ -708,7 +760,7 @@ void initializeOta() {
   });
 
   ArduinoOTA.begin();
-  Serial.printf("ArduinoOTA ready, hostname %s, IP %s\n", OTA_HOSTNAME, WiFi.localIP().toString().c_str());
+  Serial.printf("ArduinoOTA ready, hostname %s, IP %s\n", kOtaHostname, WiFi.localIP().toString().c_str());
   Serial.println("OTA password loaded from generated header and will not be printed");
 }
 
@@ -947,17 +999,44 @@ void publishHaSensorDiscovery(const char* objectId,
   publishDiscoveryPayload("sensor", objectId, payload);
 }
 
+bool formatHaObjectId(char* buffer, size_t bufferSize, const char* suffix) {
+  return formatInto(buffer, bufferSize, "HA discovery object id", "%s_%s", kHaUniqueIdPrefix, suffix);
+}
+
+void publishPrefixedHaSensorDiscovery(const char* objectSuffix,
+                                      const char* name,
+                                      const char* stateTopic,
+                                      const char* deviceClass,
+                                      const char* unit,
+                                      const char* stateClass,
+                                      const char* entityCategory) {
+  char objectId[96];
+  if (!formatHaObjectId(objectId, sizeof(objectId), objectSuffix)) {
+    Serial.printf("HA discovery skipped for %s: object id too long\n", objectSuffix);
+    return;
+  }
+
+  publishHaSensorDiscovery(objectId, name, stateTopic, deviceClass, unit, stateClass, entityCategory);
+}
+
 void publishHaSwitchDiscovery() {
+  char objectId[96];
+  if (!formatHaObjectId(objectId, sizeof(objectId), "stay_awake")) {
+    Serial.println("HA discovery skipped for stay_awake: object id too long");
+    return;
+  }
+
   char payload[1024];
   if (!formatInto(payload,
                   sizeof(payload),
                   "HA switch discovery payload",
-                  "{\"name\":\"Stay Awake\",\"unique_id\":\"esp32_meteo_v3_stay_awake\","
+                  "{\"name\":\"Stay Awake\",\"unique_id\":\"%s\","
                   "\"command_topic\":\"%s\",\"state_topic\":\"%s\","
                   "\"payload_on\":\"true\",\"payload_off\":\"false\","
                   "\"state_on\":\"true\",\"state_off\":\"false\",\"retain\":true,"
                   "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
                   "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
+                  objectId,
                   kStayAwakeTopic,
                   kStayAwakeTopic,
                   kHaDeviceIdentifier,
@@ -967,11 +1046,11 @@ void publishHaSwitchDiscovery() {
                   kFirmwareName,
                   kFirmwareName,
                   kFirmwareName)) {
-    Serial.println("HA discovery skipped for esp32_meteo_v3_stay_awake: payload too long");
+    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
     return;
   }
 
-  publishDiscoveryPayload("switch", "esp32_meteo_v3_stay_awake", payload);
+  publishDiscoveryPayload("switch", objectId, payload);
 }
 
 void publishHomeAssistantDiscovery() {
@@ -979,132 +1058,132 @@ void publishHomeAssistantDiscovery() {
   logPhase("Home Assistant discovery");
   Serial.printf("Publishing retained discovery configs under %s/#\n", kHaDiscoveryPrefix);
 
-  publishHaSensorDiscovery("esp32_meteo_v3_bmp390_temperature",
-                           "BMP390 Temperature",
-                           topic("/sensor/bmp390_temperature").c_str(),
-                           "temperature",
-                           "\\u00b0C",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_absolute_pressure",
-                           "Absolute Pressure",
-                           topic("/sensor/absolute_pressure").c_str(),
-                           "atmospheric_pressure",
-                           "hPa",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_outside_temperature",
-                           "Outside Temperature",
-                           topic("/sensor/outside_temperature").c_str(),
-                           "temperature",
-                           "\\u00b0C",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_outside_humidity",
-                           "Outside Humidity",
-                           topic("/sensor/outside_humidity").c_str(),
-                           "humidity",
-                           "%",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_battery_voltage",
-                           "Battery Voltage",
-                           topic("/sensor/battery_voltage").c_str(),
-                           "voltage",
-                           "V",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_battery_current",
-                           "Battery Current",
-                           topic("/sensor/battery_current").c_str(),
-                           "current",
-                           "mA",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_battery_power",
-                           "Battery Power",
-                           topic("/sensor/battery_power").c_str(),
-                           "power",
-                           "W",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_battery_level",
-                           "Battery Level",
-                           topic("/sensor/battery_level").c_str(),
-                           "battery",
-                           "%",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_solar_raw_voltage",
-                           "Solar Raw Voltage",
-                           topic("/sensor/solar_raw_voltage").c_str(),
-                           "voltage",
-                           "V",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_solar_panel_current",
-                           "Solar Panel Current",
-                           topic("/sensor/solar_panel_current").c_str(),
-                           "current",
-                           "mA",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_solar_raw_power",
-                           "Solar Raw Power",
-                           topic("/sensor/solar_raw_power").c_str(),
-                           "power",
-                           "W",
-                           "measurement",
-                           "");
-  publishHaSensorDiscovery("esp32_meteo_v3_wifi_signal",
-                           "WiFi Signal",
-                           topic("/diagnostic/wifi_signal").c_str(),
-                           "signal_strength",
-                           "dBm",
-                           "measurement",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_wifi_ssid",
-                           "WiFi SSID",
-                           topic("/diagnostic/wifi_ssid").c_str(),
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_ip_address",
-                           "IP Address",
-                           topic("/diagnostic/ip_address").c_str(),
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_reset_reason",
-                           "Reset Reason",
-                           topic("/diagnostic/reset_reason").c_str(),
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_sensor_readiness",
-                           "Sensor Readiness",
-                           topic("/diagnostic/sensor_readiness").c_str(),
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_battery_chemistry",
-                           "Battery Chemistry",
-                           topic("/diagnostic/battery_chemistry").c_str(),
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
-  publishHaSensorDiscovery("esp32_meteo_v3_status",
-                           "Status",
-                           kStatusTopic,
-                           "",
-                           "",
-                           "",
-                           "diagnostic");
+  publishPrefixedHaSensorDiscovery("bmp390_temperature",
+                                   "BMP390 Temperature",
+                                   topic("/sensor/bmp390_temperature").c_str(),
+                                   "temperature",
+                                   "\\u00b0C",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("absolute_pressure",
+                                   "Absolute Pressure",
+                                   topic("/sensor/absolute_pressure").c_str(),
+                                   "atmospheric_pressure",
+                                   "hPa",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("outside_temperature",
+                                   "Outside Temperature",
+                                   topic("/sensor/outside_temperature").c_str(),
+                                   "temperature",
+                                   "\\u00b0C",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("outside_humidity",
+                                   "Outside Humidity",
+                                   topic("/sensor/outside_humidity").c_str(),
+                                   "humidity",
+                                   "%",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("battery_voltage",
+                                   "Battery Voltage",
+                                   topic("/sensor/battery_voltage").c_str(),
+                                   "voltage",
+                                   "V",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("battery_current",
+                                   "Battery Current",
+                                   topic("/sensor/battery_current").c_str(),
+                                   "current",
+                                   "mA",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("battery_power",
+                                   "Battery Power",
+                                   topic("/sensor/battery_power").c_str(),
+                                   "power",
+                                   "W",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("battery_level",
+                                   "Battery Level",
+                                   topic("/sensor/battery_level").c_str(),
+                                   "battery",
+                                   "%",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("solar_raw_voltage",
+                                   "Solar Raw Voltage",
+                                   topic("/sensor/solar_raw_voltage").c_str(),
+                                   "voltage",
+                                   "V",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("solar_panel_current",
+                                   "Solar Panel Current",
+                                   topic("/sensor/solar_panel_current").c_str(),
+                                   "current",
+                                   "mA",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("solar_raw_power",
+                                   "Solar Raw Power",
+                                   topic("/sensor/solar_raw_power").c_str(),
+                                   "power",
+                                   "W",
+                                   "measurement",
+                                   "");
+  publishPrefixedHaSensorDiscovery("wifi_signal",
+                                   "WiFi Signal",
+                                   topic("/diagnostic/wifi_signal").c_str(),
+                                   "signal_strength",
+                                   "dBm",
+                                   "measurement",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("wifi_ssid",
+                                   "WiFi SSID",
+                                   topic("/diagnostic/wifi_ssid").c_str(),
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("ip_address",
+                                   "IP Address",
+                                   topic("/diagnostic/ip_address").c_str(),
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("reset_reason",
+                                   "Reset Reason",
+                                   topic("/diagnostic/reset_reason").c_str(),
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("sensor_readiness",
+                                   "Sensor Readiness",
+                                   topic("/diagnostic/sensor_readiness").c_str(),
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("battery_chemistry",
+                                   "Battery Chemistry",
+                                   topic("/diagnostic/battery_chemistry").c_str(),
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
+  publishPrefixedHaSensorDiscovery("status",
+                                   "Status",
+                                   kStatusTopic,
+                                   "",
+                                   "",
+                                   "",
+                                   "diagnostic");
   publishHaSwitchDiscovery();
 }
 

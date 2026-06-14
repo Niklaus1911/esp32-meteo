@@ -14,9 +14,9 @@
 
 ## Overview
 
-`esp32-meteo` is firmware for an ESP32 DevKit weather station designed to wake, measure, publish retained MQTT states, and return to deep sleep. Home Assistant can discover the device automatically through retained MQTT discovery configs, while retained sensor states remain visible during normal sleep cycles.
+`esp32-meteo` is firmware for ESP32 DevKit and ESP32-C3 DevKitM-1 weather stations designed to wake, measure, publish retained MQTT states, and return to deep sleep. Home Assistant can discover each device automatically through retained MQTT discovery configs, while retained sensor states remain visible during normal sleep cycles.
 
-The firmware currently targets the `esp32-meteo-v3` MQTT topic prefix and publishes environmental, battery, solar, WiFi, reset, and sensor-readiness diagnostics.
+The ESP32 build keeps the existing `esp32-meteo-v3` MQTT and Home Assistant identity. The ESP32-C3 build uses the separate `esp32-meteo-c3` identity so both boards can run at the same time.
 
 ## Highlights
 
@@ -25,7 +25,7 @@ The firmware currently targets the `esp32-meteo-v3` MQTT topic prefix and publis
 | Power model | 10 minute deep-sleep cycle by default |
 | Home Assistant | Retained MQTT discovery, no `availability_topic`, no `expire_after` |
 | Sensor states | Retained publishes; invalid or `NAN` readings are skipped |
-| Control | Retained `esp32-meteo-v3/control/stay_awake` switch keeps the node awake after the next wake |
+| Control | Retained `<topic-prefix>/control/stay_awake` switch keeps the node awake after the next wake |
 | Diagnostics | Retained reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, and status |
 | OTA | ArduinoOTA while the device is awake |
 
@@ -33,7 +33,7 @@ The firmware currently targets the `esp32-meteo-v3` MQTT topic prefix and publis
 
 | Device | Purpose | I2C address |
 | --- | --- | --- |
-| ESP32 DevKit | WiFi, MQTT, OTA, deep sleep, I2C master | n/a |
+| ESP32 DevKit or ESP32-C3 DevKitM-1 | WiFi, MQTT, OTA, deep sleep, I2C master | n/a |
 | BMP390 / BMP3xx | Pressure and BMP temperature | `0x77` |
 | SHT41 / SHT4x | Outside temperature and humidity | `0x44` |
 | INA226 | Solar input voltage, current, power | `0x40` |
@@ -41,7 +41,14 @@ The firmware currently targets the `esp32-meteo-v3` MQTT topic prefix and publis
 | TP5000 module | Single-cell battery charging, configured for installed chemistry | n/a |
 | Single-cell battery | Li-ion or LiFePO4 storage, selected in `secrets.yaml` | n/a |
 
-I2C uses GPIO21 for SDA and GPIO22 for SCL. Keep I2C pullups tied to 3.3 V only.
+I2C pins are selected by the PlatformIO environment:
+
+| Environment | Board | SDA | SCL |
+| --- | --- | --- | --- |
+| `esp32dev`, `esp32dev_ota` | ESP32 DevKit | GPIO21 | GPIO22 |
+| `esp32c3`, `esp32c3_ota` | ESP32-C3 DevKitM-1 | GPIO8 | GPIO9 |
+
+Keep I2C pullups tied to 3.3 V only.
 
 ### Power Design
 
@@ -63,13 +70,16 @@ Battery percentage is an estimate from voltage only. It is usually useful for Li
 
 ## MQTT Topics
 
-Base topic:
+Base topics:
 
 ```text
-esp32-meteo-v3
+esp32dev: esp32-meteo-v3
+esp32c3:  esp32-meteo-c3
 ```
 
-Important topics:
+The ESP32 Home Assistant device remains `ESP32 Meteo V3` with `esp32_meteo_v3_*` unique IDs. The ESP32-C3 Home Assistant device is `ESP32 Meteo C3` with `esp32_meteo_c3_*` unique IDs.
+
+Important ESP32 topics:
 
 | Topic | Purpose |
 | --- | --- |
@@ -90,6 +100,8 @@ Important topics:
 | `esp32-meteo-v3/diagnostic/sensor_readiness` | Compact readiness and degraded sensor state |
 | `esp32-meteo-v3/diagnostic/battery_chemistry` | Selected battery chemistry for percentage estimate |
 
+The ESP32-C3 publishes the same suffixes under `esp32-meteo-c3/`, for example `esp32-meteo-c3/status` and `esp32-meteo-c3/sensor/battery_voltage`.
+
 ## Home Assistant Behavior
 
 The firmware is intentionally optimized for a sleepy MQTT device:
@@ -98,7 +110,7 @@ The firmware is intentionally optimized for a sleepy MQTT device:
 - Sensor discovery configs are published retained under `homeassistant/#`.
 - The firmware does not add `availability_topic` or `expire_after` to sensor discovery.
 - Intentional deep sleep publishes `status=sleeping`, then disconnects. It does not register a retained MQTT Last Will that can overwrite sleeping with offline.
-- `esp32-meteo-v3/status` is a diagnostic text sensor, not a Home Assistant availability source.
+- `<topic-prefix>/status` is a diagnostic text sensor, not a Home Assistant availability source.
 - When Home Assistant publishes `online` on `homeassistant/status`, the node republishes retained discovery while awake.
 
 ## Setup
@@ -110,24 +122,29 @@ The firmware is intentionally optimized for a sleepy MQTT device:
    cp secrets.example.yaml secrets.yaml
    ```
 
-3. Edit `secrets.yaml` with local WiFi, MQTT, OTA, and battery chemistry values.
-4. Build the USB upload environment:
+3. Edit `secrets.yaml` with local WiFi, MQTT, OTA, and battery chemistry values. Use `esp32c3_wifi_static_ip` and `esp32c3_wifi_gateway` if the C3 should have a fixed IP separate from the existing ESP32 static IP.
+4. Build the target USB upload environment:
 
    ```sh
    pio run -e esp32dev
+   pio run -e esp32c3
    ```
 
 5. Upload over USB:
 
    ```sh
    pio run -e esp32dev -t upload
+   pio run -e esp32c3 -t upload
    ```
 
 If `pio` is not on `PATH`, use:
 
 ```sh
 /home/giuseppe/.platformio/penv/bin/pio run -e esp32dev
+/home/giuseppe/.platformio/penv/bin/pio run -e esp32c3
 ```
+
+The ESP32 and ESP32-C3 environments publish separate MQTT topics and Home Assistant identifiers, so they can run at the same time. Keep each board on a unique static IP or let the C3 use DHCP.
 
 ## OTA
 
@@ -136,9 +153,11 @@ Build and upload the OTA environment while the ESP32 is awake and reachable:
 ```sh
 pio run -e esp32dev_ota
 pio run -e esp32dev_ota -t upload
+pio run -e esp32c3_ota
+pio run -e esp32c3_ota -t upload
 ```
 
-OTA authentication is loaded from the generated local secrets header and is never printed to Serial.
+OTA authentication is loaded from the generated local secrets header and is never printed to Serial. The ESP32 OTA environment targets `192.168.1.148`; the ESP32-C3 OTA environment targets `esp32-meteo-c3.local`. Override either in `platformio.local.ini` if needed.
 
 ## Local Configuration
 
@@ -166,6 +185,8 @@ Minimum validation before firmware changes are pushed:
 ```sh
 pio run -e esp32dev
 pio run -e esp32dev_ota
+pio run -e esp32c3
+pio run -e esp32c3_ota
 ```
 
 For hardware validation, check serial logs for I2C scan results, sensor readiness, WiFi, MQTT, Home Assistant discovery, retained publishes, and sleep or OTA state.
