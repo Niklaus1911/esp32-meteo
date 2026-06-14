@@ -964,6 +964,20 @@ void publishHomeAssistantDiscovery() {
                            "",
                            "",
                            "diagnostic");
+  publishHaSensorDiscovery("esp32_meteo_v3_reset_reason",
+                           "Reset Reason",
+                           topic("/diagnostic/reset_reason").c_str(),
+                           "",
+                           "",
+                           "",
+                           "diagnostic");
+  publishHaSensorDiscovery("esp32_meteo_v3_sensor_readiness",
+                           "Sensor Readiness",
+                           topic("/diagnostic/sensor_readiness").c_str(),
+                           "",
+                           "",
+                           "",
+                           "diagnostic");
   publishHaSensorDiscovery("esp32_meteo_v3_status",
                            "Status",
                            kStatusTopic,
@@ -972,6 +986,16 @@ void publishHomeAssistantDiscovery() {
                            "",
                            "diagnostic");
   publishHaSwitchDiscovery();
+}
+
+const char* readinessText(bool ready, const char* issue) {
+  if (ready) {
+    return "ready";
+  }
+  if (issue && issue[0]) {
+    return issue;
+  }
+  return "unknown";
 }
 
 void publishDiagnostics() {
@@ -983,6 +1007,19 @@ void publishDiagnostics() {
   publishText("/diagnostic/wifi_ssid", wifiSsid.c_str());
   const String ipAddress = WiFi.localIP().toString();
   publishText("/diagnostic/ip_address", ipAddress.c_str());
+  publishText("/diagnostic/reset_reason", resetReasonName(esp_reset_reason()));
+
+  char sensorReadiness[160];
+  if (formatInto(sensorReadiness,
+                 sizeof(sensorReadiness),
+                 "sensor readiness diagnostic",
+                 "solar=%s battery=%s sht4x=%s bmp3xx=%s",
+                 readinessText(devices.solarInaReady, devices.solarInaIssue),
+                 readinessText(devices.batteryInaReady, devices.batteryInaIssue),
+                 readinessText(devices.sht41Ready, devices.sht41Issue),
+                 readinessText(devices.bmp390Ready, devices.bmp390Issue))) {
+    publishText("/diagnostic/sensor_readiness", sensorReadiness);
+  }
 }
 
 void appendDegradedIssue(String& status, bool& degraded, const char* issue) {
