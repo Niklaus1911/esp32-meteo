@@ -48,6 +48,8 @@ I2C pins are selected by the PlatformIO environment:
 | `esp32dev`, `esp32dev_ota` | ESP32 DevKit | GPIO21 | GPIO22 |
 | `esp32c3`, `esp32c3_ota` | ESP32-C3 DevKitM-1 | GPIO8 | GPIO9 |
 
+The firmware currently requests an 80 MHz CPU frequency for both targets. Classic ESP32 boards can run up to 240 MHz, while ESP32-C3 boards can run up to 160 MHz; 80 MHz is used as a shared low-power active-mode setting.
+
 Keep I2C pullups tied to 3.3 V only.
 
 ### Power Design
