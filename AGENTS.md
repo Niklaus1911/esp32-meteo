@@ -34,7 +34,8 @@ Home Assistant must keep sensor data available while the ESP32 is in normal deep
 - Publish sensor states retained so Home Assistant and MQTT clients keep the last known values.
 - Do not add `availability_topic` or `expire_after` to sensor discovery unless the product decision changes.
 - Do not publish an availability `offline` payload for intentional deep sleep.
-- Keep `esp32-meteo-v3/status` as a diagnostic text sensor for `online`, `sleeping`, `offline`, `online; degraded: ...`, and `ota_updating`.
+- Do not register a retained MQTT Last Will on `esp32-meteo-v3/status` that can overwrite intentional `sleeping`.
+- Keep `esp32-meteo-v3/status` as a diagnostic text sensor for `online`, `sleeping`, `online; degraded: ...`, and `ota_updating`.
 - Keep the retained `esp32-meteo-v3/control/stay_awake` switch usable while the ESP32 sleeps.
 - After MQTT connects, publish `status=online`, subscribe to `esp32-meteo-v3/control/stay_awake`, process the retained stay-awake command, then subscribe to `homeassistant/status` and publish retained discovery.
 - Subscribe to `homeassistant/status` and republish retained discovery when Home Assistant announces `online`.

@@ -55,7 +55,7 @@ Important topics:
 
 | Topic | Purpose |
 | --- | --- |
-| `esp32-meteo-v3/status` | Diagnostic lifecycle status: `online`, `sleeping`, `offline`, `online; degraded: ...`, `ota_updating` |
+| `esp32-meteo-v3/status` | Diagnostic lifecycle status: `online`, `sleeping`, `online; degraded: ...`, `ota_updating` |
 | `esp32-meteo-v3/control/stay_awake` | Retained Home Assistant switch command and state |
 | `esp32-meteo-v3/sensor/bmp390_temperature` | BMP390 temperature |
 | `esp32-meteo-v3/sensor/absolute_pressure` | Absolute pressure |
@@ -78,7 +78,8 @@ The firmware is intentionally optimized for a sleepy MQTT device:
 - Sensor values are published retained so Home Assistant keeps the last known good state while the ESP32 sleeps.
 - Sensor discovery configs are published retained under `homeassistant/#`.
 - The firmware does not add `availability_topic` or `expire_after` to sensor discovery.
-- Intentional deep sleep publishes `status=sleeping`, then disconnects. It does not publish an offline availability payload.
+- Intentional deep sleep publishes `status=sleeping`, then disconnects. It does not register a retained MQTT Last Will that can overwrite sleeping with offline.
+- `esp32-meteo-v3/status` is a diagnostic text sensor, not a Home Assistant availability source.
 - When Home Assistant publishes `online` on `homeassistant/status`, the node republishes retained discovery while awake.
 
 ## Setup
@@ -155,4 +156,3 @@ For hardware validation, check serial logs for I2C scan results, sensor readines
 - Use 3.3 V I2C levels only.
 - Treat any single-cell Li-ion charger output above about 4.25 V as unsafe or untrusted.
 - Verify the TP5000 module variant, charge current, regulator path, and battery protection before unattended solar use.
-

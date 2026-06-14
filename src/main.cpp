@@ -681,14 +681,7 @@ bool connectMqtt() {
     ++attempt;
     const String clientId = String(kTopicPrefix) + "-" + String(static_cast<uint32_t>(ESP.getEfuseMac()), HEX);
     Serial.printf("MQTT connect attempt %u using client ID %s\n", attempt, clientId.c_str());
-    if (mqttClient.connect(
-            clientId.c_str(),
-            MQTT_USERNAME,
-            MQTT_PASSWORD,
-            kStatusTopic,
-            1,
-            true,
-            "offline")) {
+    if (mqttClient.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD)) {
       Serial.printf("MQTT connected in %lu ms\n", static_cast<unsigned long>(millis() - started));
       const bool statusPublished = mqttClient.publish(kStatusTopic, "online", true);
       Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
