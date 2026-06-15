@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+PIO_FALLBACK = Path("/home/giuseppe/.platformio/penv/bin/pio")
+
+BUILD_ENVS = ("esp32dev", "esp32dev_ota", "esp32c3", "esp32c3_ota")
+FORBIDDEN_TRACKED_PATHS = (
+    "secrets.yaml",
+    "src/secrets_local.h",
+    "platformio.local.ini",
+)
+FORBIDDEN_TRACKED_DIRS = (".pio/",)
+
+IDENTITY_CHECKS = (
+    (
+        "esp32dev",
+        ("esp32-meteo-v3", "ESP32 Meteo V3", "esp32_meteo_v3"),
+        ("esp32-meteo-c3", "ESP32 Meteo C3", "esp32_meteo_c3"),
+    ),
+    (
+        "esp32dev_ota",
+        ("esp32-meteo-v3", "ESP32 Meteo V3", "esp32_meteo_v3"),
+        ("esp32-meteo-c3", "ESP32 Meteo C3", "esp32_meteo_c3"),
+    ),
+    (
+        "esp32c3",
+        ("esp32-meteo-c3", "ESP32 Meteo C3", "esp32_meteo_c3"),
+        ("esp32-meteo-v3", "ESP32 Meteo V3", "esp32_meteo_v3"),
+    ),
+    (
+        "esp32c3_ota",
+        ("esp32-meteo-c3", "ESP32 Meteo C3", "esp32_meteo_c3"),
+        ("esp32-meteo-v3", "ESP32 Meteo V3", "esp32_meteo_v3"),
+    ),
+)
+
+TEXT_FILE_SUFFIXES = {".cpp", ".h", ".ini", ".md", ".py", ".yaml", ".yml"}
+FORBIDDEN_TERMS = ("availability_topic", "expire_after", "offline", "last will")
+
+
+def fail(message: str) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def run(command: list[str], description: str, *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    print(f"\n== {description} ==")
+    print(" ".join(command))
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_DIR,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.STDOUT if capture else None,
+    )
+    if capture and completed.stdout:
+        print(completed.stdout, end="")
+    if completed.returncode != 0:
+        fail(f"{description} failed with exit code {completed.returncode}")
+    return completed
+
+
+def git_lines(*args: str) -> list[str]:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=PROJECT_DIR,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if completed.returncode != 0:
+        if completed.stdout:
+            print(completed.stdout, end="")
+        fail(f"git {' '.join(args)} failed with exit code {completed.returncode}")
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def pio_command() -> str:
+    if PIO_FALLBACK.exists():
+        return str(PIO_FALLBACK)
+    found = shutil.which("pio")
+    if found:
+        return found
+    fail("PlatformIO executable not found; install pio or use the PlatformIO virtualenv")
+
+
+def check_required_local_files() -> None:
+    print("\n== Required local build inputs ==")
+    if not (PROJECT_DIR / "secrets.yaml").exists():
+        fail("secrets.yaml is required for PlatformIO builds")
+    print("secrets.yaml present")
+
+
+def check_no_tracked_local_files() -> None:
+    tracked = set(git_lines("ls-files"))
+    failures = [path for path in FORBIDDEN_TRACKED_PATHS if path in tracked]
+    failures.extend(
+        path for path in tracked for forbidden_dir in FORBIDDEN_TRACKED_DIRS if path.startswith(forbidden_dir)
+    )
+    if failures:
+        fail("local/generated files are tracked: " + ", ".join(sorted(failures)))
+    print("No forbidden local/generated files are tracked")
+
+
+def allow_documented_policy_line(path: str, line: str, term: str) -> bool:
+    if not path.endswith(("README.md", "AGENTS.md")):
+        return False
+
+    normalized = " ".join(line.lower().split())
+    if term in {"availability_topic", "expire_after"}:
+        return "do not add" in normalized or "does not add" in normalized or "no `" in normalized
+    if term == "offline":
+        return "do not" in normalized or "does not" in normalized
+    if term == "last will":
+        return "do not" in normalized or "does not" in normalized
+    return False
+
+
+def check_forbidden_text() -> None:
+    tracked_text_files = [
+        Path(path)
+        for path in git_lines("ls-files")
+        if Path(path).suffix in TEXT_FILE_SUFFIXES and not path.startswith("scripts/check_project.py")
+    ]
+
+    violations: list[str] = []
+    for relative_path in tracked_text_files:
+        path = PROJECT_DIR / relative_path
+        content = path.read_text(encoding="utf-8")
+        for line_number, line in enumerate(content.splitlines(), 1):
+            lowered = line.lower()
+            for term in FORBIDDEN_TERMS:
+                if term in lowered and not allow_documented_policy_line(str(relative_path), line, term):
+                    violations.append(f"{relative_path}:{line_number}: contains {term!r}")
+
+        for match in re.finditer(r"mqtt\w*\.connect\s*\(([^;{}]*)\)", content, flags=re.IGNORECASE | re.DOTALL):
+            argument_count = match.group(1).count(",") + 1
+            if argument_count > 3:
+                line_number = content.count("\n", 0, match.start()) + 1
+                violations.append(f"{relative_path}:{line_number}: MQTT connect appears to include Last Will arguments")
+
+    if violations:
+        fail("forbidden MQTT/Home Assistant behavior found:\n" + "\n".join(violations))
+    print("No forbidden MQTT/Home Assistant behavior found in tracked text files")
+
+
+def build_all_environments() -> None:
+    command = [pio_command(), "run"]
+    for environment in BUILD_ENVS:
+        command.extend(("-e", environment))
+    run(command, "PlatformIO build matrix")
+
+
+def check_firmware_identities() -> None:
+    print("\n== Firmware identity strings ==")
+    for environment, required_strings, forbidden_strings in IDENTITY_CHECKS:
+        firmware = PROJECT_DIR / ".pio" / "build" / environment / "firmware.elf"
+        if not firmware.exists():
+            fail(f"missing firmware artifact: {firmware.relative_to(PROJECT_DIR)}")
+
+        data = firmware.read_bytes()
+        missing = [value for value in required_strings if value.encode() not in data]
+        forbidden = [value for value in forbidden_strings if value.encode() in data]
+        if missing or forbidden:
+            fail(
+                f"{environment} identity mismatch; missing={missing or 'none'} "
+                f"forbidden_present={forbidden or 'none'}"
+            )
+        print(f"{environment}: ok")
+
+
+def main() -> None:
+    check_required_local_files()
+    run(["git", "diff", "--check"], "Unstaged whitespace check")
+    run(["git", "diff", "--cached", "--check"], "Staged whitespace check")
+    check_no_tracked_local_files()
+    check_forbidden_text()
+    build_all_environments()
+    check_firmware_identities()
+    print("\nProject check passed")
+
+
+if __name__ == "__main__":
+    main()

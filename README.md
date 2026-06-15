@@ -186,7 +186,15 @@ platformio.local.ini
 
 ## Validation
 
-Minimum validation before firmware changes are pushed:
+Preferred local validation before firmware changes are pushed:
+
+```sh
+python3 scripts/check_project.py
+```
+
+The project check requires local `secrets.yaml`. It runs whitespace checks, verifies local/generated files are not tracked, checks MQTT/Home Assistant behavior guardrails, builds all supported environments, and verifies ESP32/ESP32-C3 firmware identity strings.
+
+Manual build commands, if you want to run environments individually:
 
 ```sh
 pio run -e esp32dev
