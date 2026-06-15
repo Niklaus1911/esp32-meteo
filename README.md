@@ -29,6 +29,10 @@ The ESP32 build keeps the existing `esp32-meteo-v3` MQTT and Home Assistant iden
 | Diagnostics | Retained reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, and status |
 | OTA | ArduinoOTA while the device is awake |
 
+## Code Organization
+
+`src/main.cpp` only contains the Arduino `setup()` and `loop()` wrappers. Firmware behavior is split into focused modules under `src/`: `app` owns the boot/loop lifecycle, `config` owns target constants, `sensors` owns I2C devices and readings, `wifi_connect`/`ota_service`/`mqtt_client` own connectivity, `ha_discovery` owns Home Assistant discovery payloads, `telemetry` owns retained readings and diagnostics, and `sleep` owns deep-sleep preparation.
+
 ## Hardware
 
 | Device | Purpose | I2C address |
