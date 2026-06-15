@@ -7,141 +7,15 @@
 #include <Adafruit_SHT4x.h>
 #include <INA226_WE.h>
 #include <esp_sleep.h>
-#include <cstdarg>
 
-#include "secrets_local.h"
-
-#define ESP32_METEO_MODEL_ESP32_DEVKIT "ESP32 DevKit weather node"
-#define ESP32_METEO_MODEL_ESP32C3_DEVKITM1 "ESP32-C3 DevKitM-1 weather node"
-#define ESP32_METEO_TOPIC_PREFIX_ESP32 "esp32-meteo-v3"
-#define ESP32_METEO_TOPIC_PREFIX_C3 "esp32-meteo-c3"
-#define ESP32_METEO_HA_UNIQUE_PREFIX_ESP32 "esp32_meteo_v3"
-#define ESP32_METEO_HA_UNIQUE_PREFIX_C3 "esp32_meteo_c3"
-#define ESP32_METEO_HA_DEVICE_NAME_ESP32 "ESP32 Meteo V3"
-#define ESP32_METEO_HA_DEVICE_NAME_C3 "ESP32 Meteo C3"
-
-#ifdef ESP32_METEO_TARGET_C3
-#define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_C3
-#define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/status"
-#define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/control/stay_awake"
-#define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_C3
-#define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_C3
-#define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_C3
-#define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_C3
-#define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32C3_DEVKITM1
-#define ESP32_METEO_WIFI_STATIC_IP ESP32C3_WIFI_STATIC_IP
-#define ESP32_METEO_WIFI_GATEWAY ESP32C3_WIFI_GATEWAY
-#define ESP32_METEO_WIFI_HAS_STATIC_IP ESP32C3_WIFI_HAS_STATIC_IP
-#else
-#define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_ESP32
-#define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/status"
-#define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/control/stay_awake"
-#define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_ESP32
-#define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_ESP32
-#define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_ESP32
-#define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_ESP32
-#define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32_DEVKIT
-#define ESP32_METEO_WIFI_STATIC_IP WIFI_STATIC_IP
-#define ESP32_METEO_WIFI_GATEWAY WIFI_GATEWAY
-#define ESP32_METEO_WIFI_HAS_STATIC_IP WIFI_HAS_STATIC_IP
-#endif
-
-#ifndef ESP32_METEO_I2C_SDA_PIN
-#define ESP32_METEO_I2C_SDA_PIN 21
-#endif
-
-#ifndef ESP32_METEO_I2C_SCL_PIN
-#define ESP32_METEO_I2C_SCL_PIN 22
-#endif
-
-#ifndef ESP32_METEO_HA_MODEL
-#define ESP32_METEO_HA_MODEL ESP32_METEO_DEFAULT_HA_MODEL
-#endif
+#include "battery.h"
+#include "config.h"
+#include "runtime_state.h"
+#include "util.h"
 
 namespace {
 
-constexpr uint32_t kSerialBaud = 115200;
-constexpr uint8_t kI2cSdaPin = static_cast<uint8_t>(ESP32_METEO_I2C_SDA_PIN);
-constexpr uint8_t kI2cSclPin = static_cast<uint8_t>(ESP32_METEO_I2C_SCL_PIN);
-
-constexpr uint8_t kSolarInaAddress = 0x40;
-constexpr uint8_t kBatteryInaAddress = 0x41;
-constexpr uint8_t kSht41Address = 0x44;
-constexpr uint8_t kBmp390Address = 0x77;
-
-constexpr const char* kFirmwareName = ESP32_METEO_TOPIC_PREFIX;
-constexpr const char* kTopicPrefix = ESP32_METEO_TOPIC_PREFIX;
-constexpr const char* kStayAwakeTopic = ESP32_METEO_STAY_AWAKE_TOPIC;
-constexpr const char* kStatusTopic = ESP32_METEO_STATUS_TOPIC;
-constexpr const char* kHaDiscoveryPrefix = "homeassistant";
-constexpr const char* kHaStatusTopic = "homeassistant/status";
-constexpr const char* kHaDeviceIdentifier = ESP32_METEO_HA_DEVICE_IDENTIFIER;
-constexpr const char* kHaDeviceName = ESP32_METEO_HA_DEVICE_NAME;
-constexpr const char* kHaManufacturer = "DIY";
-constexpr const char* kHaModel = ESP32_METEO_HA_MODEL;
-constexpr const char* kHaUniqueIdPrefix = ESP32_METEO_HA_UNIQUE_PREFIX;
-constexpr const char* kOtaHostname = ESP32_METEO_OTA_HOSTNAME;
-constexpr const char* kWifiStaticIp = ESP32_METEO_WIFI_STATIC_IP;
-constexpr const char* kWifiGateway = ESP32_METEO_WIFI_GATEWAY;
-constexpr bool kWifiHasStaticIp = ESP32_METEO_WIFI_HAS_STATIC_IP;
-
-constexpr uint64_t kDeepSleepSeconds = 10ULL * 60ULL;
-constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
-constexpr uint32_t kWifiConnectTimeoutMs = 20UL * 1000UL;
-constexpr uint32_t kMqttConnectTimeoutMs = 10UL * 1000UL;
-constexpr uint32_t kRetainedCommandWaitMs = 5000;
-constexpr uint32_t kTelemetryFlushMs = 750;
-constexpr uint32_t kPostTelemetryAwakeMs = 10UL * 1000UL;
-constexpr uint32_t kSleepStatusConfirmTimeoutMs = 3000;
-constexpr uint8_t kSleepStatusConfirmAttempts = 3;
-constexpr uint32_t kPostSleepStatusGraceMs = 3000;
-constexpr uint32_t kWifiRetryDelayMs = 250;
-constexpr uint32_t kMqttRetryDelayMs = 500;
-constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
-constexpr uint32_t kSensorPostInitSettleDelayMs = 1000;
-constexpr uint32_t kBmp390InitRetryDelayMs = 1000;
-constexpr uint32_t kBmp390WarmupDiscardDelayMs = 250;
-constexpr uint32_t kBeforeFirstReadDelayMs = 500;
-constexpr uint8_t kBmp390InitAttempts = 3;
-constexpr uint32_t kCpuFrequencyMhz = 80;
-constexpr wifi_power_t kWifiTxPower = WIFI_POWER_11dBm;
-constexpr const char* kWifiTxPowerLabel = "11 dBm";
-constexpr size_t kMqttBufferSize = 2048;
-constexpr size_t kMqttMaxHeaderBytes = 5;
-
-constexpr float kInaShuntOhms = 0.1f;
-constexpr float kSolarMaxCurrentA = 1.0f;
-constexpr float kBatteryMaxCurrentA = 0.8f;
-constexpr uint8_t kBatteryChemistryLiIon = 0;
-constexpr uint8_t kBatteryChemistryLiFePO4 = 1;
-
-// Set true during local serial/MQTT testing to keep the device awake without a retained MQTT command.
-// Keep false for production so the node returns to deep sleep unless MQTT explicitly requests stay-awake.
-constexpr bool kForceStayAwakeForTesting = false;
-
-struct BatteryCurvePoint {
-  float voltage;
-  float percent;
-};
-
-struct BatteryCurve {
-  const BatteryCurvePoint* points;
-  size_t pointCount;
-};
-
-constexpr BatteryCurvePoint kLiIonBatteryCurve[] = {
-    {3.20f, 0.0f},   {3.40f, 10.0f},  {3.58f, 20.0f},
-    {3.68f, 30.0f},  {3.74f, 40.0f},  {3.79f, 50.0f},
-    {3.85f, 60.0f},  {3.92f, 70.0f},  {4.00f, 80.0f},
-    {4.10f, 90.0f},  {4.16f, 100.0f},
-};
-
-constexpr BatteryCurvePoint kLiFePO4BatteryCurve[] = {
-    {2.80f, 0.0f},   {3.00f, 5.0f},   {3.10f, 10.0f},
-    {3.18f, 20.0f},  {3.22f, 30.0f},  {3.25f, 40.0f},
-    {3.27f, 50.0f},  {3.28f, 60.0f},  {3.30f, 70.0f},
-    {3.32f, 80.0f},  {3.35f, 90.0f},  {3.45f, 100.0f},
-};
+using namespace Esp32Meteo;
 
 struct DeviceState {
   bool solarInaPresent = false;
@@ -180,88 +54,9 @@ INA226_WE solarIna(kSolarInaAddress);
 INA226_WE batteryIna(kBatteryInaAddress);
 DeviceState devices;
 
-bool stayAwakeRequested = false;
-bool stayAwakeCommandReceived = false;
-bool homeAssistantDiscoveryRequested = false;
-bool otaInProgress = false;
-bool telemetryPublishCompleted = false;
-bool statusConfirmationPending = false;
-bool statusConfirmationReceived = false;
-bool statusConfirmationSubscribed = false;
-const char* statusConfirmationExpected = nullptr;
-uint32_t telemetryPublishCompletedMs = 0;
-uint32_t lastPublishMs = 0;
-
 void publishHomeAssistantDiscovery();
 void flushMqtt(uint32_t durationMs);
 void waitForRetainedStayAwakeCommand();
-BatteryCurve activeBatteryCurve();
-
-void logPhase(const char* phase) {
-  Serial.println();
-  Serial.printf("== %s ==\n", phase);
-}
-
-const char* yesNo(bool value) {
-  return value ? "yes" : "no";
-}
-
-bool formatInto(char* buffer, size_t bufferSize, const char* description, const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  const int written = vsnprintf(buffer, bufferSize, format, args);
-  va_end(args);
-
-  if (written < 0) {
-    Serial.printf("Formatting failed for %s\n", description);
-    return false;
-  }
-  if (static_cast<size_t>(written) >= bufferSize) {
-    Serial.printf("Formatting truncated for %s: needed %u bytes, buffer has %u bytes\n",
-                  description,
-                  static_cast<unsigned int>(written + 1),
-                  static_cast<unsigned int>(bufferSize));
-    return false;
-  }
-  return true;
-}
-
-bool appendChecked(char* destination, size_t destinationSize, const char* description, const char* value) {
-  const size_t used = strlen(destination);
-  const size_t valueLength = strlen(value);
-  if (used + valueLength >= destinationSize) {
-    Serial.printf("Formatting truncated for %s: needed %u bytes, buffer has %u bytes\n",
-                  description,
-                  static_cast<unsigned int>(used + valueLength + 1),
-                  static_cast<unsigned int>(destinationSize));
-    return false;
-  }
-
-  strlcat(destination, value, destinationSize);
-  return true;
-}
-
-String topic(const char* suffix) {
-  String full(kTopicPrefix);
-  full += suffix;
-  return full;
-}
-
-bool payloadEquals(const byte* payload, unsigned int length, const char* expected) {
-  if (!expected) {
-    return false;
-  }
-  const size_t expectedLength = strlen(expected);
-  if (length != expectedLength) {
-    return false;
-  }
-  for (unsigned int i = 0; i < length; ++i) {
-    if (payload[i] != static_cast<byte>(expected[i])) {
-      return false;
-    }
-  }
-  return true;
-}
 
 void markTelemetryPublishCompleted() {
   telemetryPublishCompleted = true;
@@ -309,33 +104,6 @@ void waitForPostTelemetryAwakeWindow() {
                 static_cast<unsigned long>(elapsedMs),
                 static_cast<unsigned long>(kPostTelemetryAwakeMs));
   waitWithMqttAndOta(remainingMs, "Post-telemetry awake window wait");
-}
-
-const char* resetReasonName(esp_reset_reason_t reason) {
-  switch (reason) {
-    case ESP_RST_POWERON:
-      return "power-on";
-    case ESP_RST_EXT:
-      return "external";
-    case ESP_RST_SW:
-      return "software";
-    case ESP_RST_PANIC:
-      return "panic";
-    case ESP_RST_INT_WDT:
-      return "interrupt watchdog";
-    case ESP_RST_TASK_WDT:
-      return "task watchdog";
-    case ESP_RST_WDT:
-      return "watchdog";
-    case ESP_RST_DEEPSLEEP:
-      return "deep sleep";
-    case ESP_RST_BROWNOUT:
-      return "brownout";
-    case ESP_RST_SDIO:
-      return "SDIO";
-    default:
-      return "unknown";
-  }
 }
 
 bool i2cAddressPresent(uint8_t address) {
@@ -515,41 +283,6 @@ void initializeSensors() {
   Serial.printf("Waiting %lu ms for sensors to settle after initialization\n",
                 static_cast<unsigned long>(kSensorPostInitSettleDelayMs));
   delay(kSensorPostInitSettleDelayMs);
-}
-
-float batteryLevelPercent(float voltage) {
-  if (isnan(voltage)) {
-    return NAN;
-  }
-
-  const BatteryCurve curve = activeBatteryCurve();
-  if (voltage <= curve.points[0].voltage) {
-    return 0.0f;
-  }
-
-  if (voltage >= curve.points[curve.pointCount - 1].voltage) {
-    return 100.0f;
-  }
-
-  for (size_t i = 1; i < curve.pointCount; ++i) {
-    const BatteryCurvePoint& lower = curve.points[i - 1];
-    const BatteryCurvePoint& upper = curve.points[i];
-    if (voltage <= upper.voltage) {
-      const float ratio = (voltage - lower.voltage) / (upper.voltage - lower.voltage);
-      return lower.percent + ratio * (upper.percent - lower.percent);
-    }
-  }
-  return 100.0f;
-}
-
-BatteryCurve activeBatteryCurve() {
-  if (BATTERY_CHEMISTRY_ID == kBatteryChemistryLiFePO4) {
-    return {kLiFePO4BatteryCurve, sizeof(kLiFePO4BatteryCurve) / sizeof(kLiFePO4BatteryCurve[0])};
-  }
-  if (BATTERY_CHEMISTRY_ID == kBatteryChemistryLiIon) {
-    return {kLiIonBatteryCurve, sizeof(kLiIonBatteryCurve) / sizeof(kLiIonBatteryCurve[0])};
-  }
-  return {kLiIonBatteryCurve, sizeof(kLiIonBatteryCurve) / sizeof(kLiIonBatteryCurve[0])};
 }
 
 void logIna226ReadDiagnostics(INA226_WE& monitor, const char* name) {
