@@ -80,7 +80,8 @@ void appLoop() {
     sleepForDefaultInterval("connection lost");
   }
 
-  serviceMqttAndOta();
+  mqttClient().loop();
+  handleOta();
 
   if (homeAssistantDiscoveryRequested) {
     publishHomeAssistantDiscovery();
