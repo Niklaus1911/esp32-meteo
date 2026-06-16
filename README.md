@@ -214,3 +214,7 @@ For hardware validation, check serial logs for I2C scan results, sensor readines
 - Match the charger module, charge voltage, charge current, and protection circuit to the installed battery chemistry.
 - Treat any single-cell Li-ion charger output above about 4.25 V as unsafe or untrusted.
 - Verify the TP5000 module variant, chemistry configuration, charge current, regulator path, and battery protection before unattended solar use.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
