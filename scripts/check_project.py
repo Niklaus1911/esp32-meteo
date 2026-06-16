@@ -12,7 +12,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-PIO_FALLBACK = Path("/home/giuseppe/.platformio/penv/bin/pio")
+PIO_FALLBACK = Path.home() / ".platformio" / "penv" / "bin" / "pio"
 
 BUILD_ENVS = ("esp32dev", "esp32dev_ota", "esp32c3", "esp32c3_ota")
 FORBIDDEN_TRACKED_PATHS = (

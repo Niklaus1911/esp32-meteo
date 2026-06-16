@@ -14,11 +14,11 @@ This is a PlatformIO ESP32 firmware project using the Arduino framework.
 ## Build, Test, and Development Commands
 
 - `pio run -e esp32dev` builds the USB/esptool firmware environment.
-- `pio run -e esp32dev -t upload` uploads over USB, currently `/dev/ttyUSB1`.
+- `pio run -e esp32dev -t upload` uploads over USB. Override `upload_port` in ignored `platformio.local.ini` if your board uses a fixed serial device.
 - `pio device monitor -b 115200` opens the serial monitor.
 - `pio run -e esp32dev_ota` builds the OTA environment.
 - `pio run -e esp32dev_ota -t upload` uploads OTA when the ESP32 is awake and reachable.
-- If `pio` is not on `PATH`, use `/home/giuseppe/.platformio/penv/bin/pio` with the same arguments.
+- If `pio` is not on `PATH`, use `python -m platformio` or your local PlatformIO virtualenv with the same arguments.
 
 The build script requires `secrets.yaml` and regenerates `src/secrets_local.h` automatically. Do not commit generated secrets.
 

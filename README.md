@@ -146,8 +146,8 @@ The firmware is intentionally optimized for a sleepy MQTT device:
 If `pio` is not on `PATH`, use:
 
 ```sh
-/home/giuseppe/.platformio/penv/bin/pio run -e esp32dev
-/home/giuseppe/.platformio/penv/bin/pio run -e esp32c3
+python -m platformio run -e esp32dev
+python -m platformio run -e esp32c3
 ```
 
 The ESP32 and ESP32-C3 environments publish separate MQTT topics and Home Assistant identifiers, so they can run at the same time. Keep each board on a unique static IP or let the C3 use DHCP.
@@ -163,7 +163,7 @@ pio run -e esp32c3_ota
 pio run -e esp32c3_ota -t upload
 ```
 
-OTA authentication is loaded from the generated local secrets header and is never printed to Serial. The ESP32 OTA environment targets `192.168.1.148`; the ESP32-C3 OTA environment targets `esp32-meteo-c3.local`. Override either in `platformio.local.ini` if needed.
+OTA authentication is loaded from the generated local secrets header and is never printed to Serial. The OTA environments default to mDNS hostnames, `esp32-meteo-v3.local` and `esp32-meteo-c3.local`. Override either `upload_port` in ignored `platformio.local.ini` if your network needs fixed IP targets.
 
 ## Local Configuration
 
