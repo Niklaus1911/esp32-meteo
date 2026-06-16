@@ -7,7 +7,7 @@
 
 <p align="center">
   <img alt="CI" src="https://github.com/Niklaus1911/esp32-meteo/actions/workflows/ci.yml/badge.svg">
-  <img alt="License" src="https://img.shields.io/github/license/Niklaus1911/esp32-meteo">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="PlatformIO" src="https://img.shields.io/badge/PlatformIO-ESP32-orange">
   <img alt="Framework" src="https://img.shields.io/badge/framework-Arduino-00979D">
   <img alt="MQTT" src="https://img.shields.io/badge/MQTT-retained%20telemetry-660066">
