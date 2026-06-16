@@ -1,10 +1,13 @@
 <h1 align="center">ESP32 Meteo</h1>
 
 <p align="center">
-  Battery-powered ESP32 weather node with MQTT telemetry, Home Assistant discovery, solar input monitoring, and deep-sleep operation.
+  Battery-powered ESP32 weather-node firmware with MQTT telemetry, Home Assistant discovery,
+  solar input monitoring, and deep-sleep operation.
 </p>
 
 <p align="center">
+  <img alt="CI" src="https://github.com/Niklaus1911/esp32-meteo/actions/workflows/ci.yml/badge.svg">
+  <img alt="License" src="https://img.shields.io/github/license/Niklaus1911/esp32-meteo">
   <img alt="PlatformIO" src="https://img.shields.io/badge/PlatformIO-ESP32-orange">
   <img alt="Framework" src="https://img.shields.io/badge/framework-Arduino-00979D">
   <img alt="MQTT" src="https://img.shields.io/badge/MQTT-retained%20telemetry-660066">
@@ -14,24 +17,40 @@
 
 ## Overview
 
-`esp32-meteo` is firmware for ESP32 DevKit and ESP32-C3 DevKitM-1 weather stations designed to wake, measure, publish retained MQTT states, and return to deep sleep. Home Assistant can discover each device automatically through retained MQTT discovery configs, while retained sensor states remain visible during normal sleep cycles.
+`esp32-meteo` is PlatformIO/Arduino firmware for ESP32 DevKit and ESP32-C3 DevKitM-1 weather stations. The node wakes, initializes sensors, publishes retained MQTT readings and Home Assistant discovery data, then returns to deep sleep.
 
-The ESP32 build keeps the existing `esp32-meteo-v3` MQTT and Home Assistant identity. The ESP32-C3 build uses the separate `esp32-meteo-c3` identity so both boards can run at the same time.
+The project is built for a sleepy MQTT device:
 
-## Highlights
+- Home Assistant keeps the last known sensor values while the ESP32 sleeps.
+- MQTT discovery is retained and republished when Home Assistant announces `online`.
+- Normal deep sleep is reported as a diagnostic `sleeping` state, not as device unavailability.
+- A retained `stay_awake` switch can keep the node online for OTA updates or live testing.
+
+Public source is ready. Public firmware binaries are intentionally not published yet because WiFi, MQTT, OTA, static IP, and battery chemistry settings are currently compiled from local `secrets.yaml`. Do not distribute `.bin` files built with real credentials.
+
+## Features
 
 | Area | Behavior |
 | --- | --- |
-| Power model | 10 minute deep-sleep cycle by default |
-| Home Assistant | Retained MQTT discovery, no `availability_topic`, no `expire_after` |
-| Sensor states | Retained publishes; invalid or `NAN` readings are skipped |
-| Control | Retained `<topic-prefix>/control/stay_awake` switch keeps the node awake after the next wake |
-| Diagnostics | Retained reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, and status |
+| Sleep cycle | 10 minute deep-sleep interval by default |
+| Sensors | BMP390/BMP3xx, SHT41/SHT4x, solar INA226, battery INA226 |
+| Telemetry | Retained MQTT states; invalid or `NAN` readings are skipped |
+| Home Assistant | Retained MQTT discovery with stable unique IDs |
+| Diagnostics | Reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, battery chemistry, lifecycle status |
 | OTA | ArduinoOTA while the device is awake |
+| Power tuning | 80 MHz CPU target and reduced WiFi TX power request |
+| Validation | GitHub Actions runs policy checks, Python tests, host C++ tests, and four PlatformIO builds |
 
-## Code Organization
+## Supported Targets
 
-`src/main.cpp` only contains the Arduino `setup()` and `loop()` wrappers. Firmware behavior is split into focused modules under `src/`: `app` owns the boot/loop lifecycle, `config` owns target constants, `sensors` owns I2C devices and readings, `wifi_connect`/`ota_service`/`mqtt_client` own connectivity, `ha_discovery` owns Home Assistant discovery payloads, `telemetry` owns retained readings and diagnostics, and `sleep` owns deep-sleep preparation.
+| PlatformIO environment | Board | Upload mode | MQTT/Home Assistant identity | I2C SDA | I2C SCL |
+| --- | --- | --- | --- | --- | --- |
+| `esp32dev` | ESP32 DevKit | USB/esptool | `esp32-meteo-v3` | GPIO21 | GPIO22 |
+| `esp32dev_ota` | ESP32 DevKit | ArduinoOTA | `esp32-meteo-v3` | GPIO21 | GPIO22 |
+| `esp32c3` | ESP32-C3 DevKitM-1 | USB/esptool | `esp32-meteo-c3` | GPIO4 | GPIO5 |
+| `esp32c3_ota` | ESP32-C3 DevKitM-1 | ArduinoOTA | `esp32-meteo-c3` | GPIO4 | GPIO5 |
+
+The ESP32 build keeps the existing `esp32-meteo-v3` identity. The ESP32-C3 build uses `esp32-meteo-c3`, so both boards can run on the same MQTT broker and Home Assistant instance.
 
 ## Hardware
 
@@ -41,107 +60,99 @@ The ESP32 build keeps the existing `esp32-meteo-v3` MQTT and Home Assistant iden
 | BMP390 / BMP3xx | Pressure and BMP temperature | `0x77` |
 | SHT41 / SHT4x | Outside temperature and humidity | `0x44` |
 | INA226 | Solar input voltage, current, power | `0x40` |
-| INA226 | Battery voltage, current, power, level | `0x41` |
+| INA226 | Battery voltage, current, power, level estimate | `0x41` |
 | TP5000 module | Single-cell battery charging, configured for installed chemistry | n/a |
-| Single-cell battery | Li-ion or LiFePO4 storage, selected in `secrets.yaml` | n/a |
+| Single-cell battery | Li-ion or LiFePO4 storage | n/a |
 
-I2C pins are selected by the PlatformIO environment:
-
-| Environment | Board | SDA | SCL |
-| --- | --- | --- | --- |
-| `esp32dev`, `esp32dev_ota` | ESP32 DevKit | GPIO21 | GPIO22 |
-| `esp32c3`, `esp32c3_ota` | ESP32-C3 DevKitM-1 | GPIO4 | GPIO5 |
-
-The firmware currently requests an 80 MHz CPU frequency for both targets. Classic ESP32 boards can run up to 240 MHz, while ESP32-C3 boards can run up to 160 MHz; 80 MHz is used as a shared low-power active-mode setting.
-
-Keep I2C pullups tied to 3.3 V only.
+Keep I2C pullups tied to 3.3 V only. `HARDWARE_SCHEMATIC.yaml` is a development-time reference for the current build and is not parsed or embedded at runtime.
 
 ### Power Design
 
-Firmware deep sleep keeps the ESP32 in its low-power sleep mode between wake cycles, but real battery drain depends on the selected DevKit board, regulator, charger module, and sensor breakout quiescent current.
+Firmware deep sleep keeps the ESP32 in a low-power mode between wake cycles, but total battery drain depends heavily on the selected DevKit board, regulator, charger module, and sensor-breakout quiescent current. Measure the assembled hardware before trusting runtime estimates.
 
-Do not power the ESP32 3.3 V rail directly from a single LiFePO4 cell. A fully charged LiFePO4 cell can exceed the ESP32 3.3 V supply range, while a discharged cell may fall too low for stable WiFi operation. Use a low-quiescent-current 3.3 V regulator or buck-boost regulator sized for WiFi transmit current, then measure the assembled deep-sleep current.
+Do not power the ESP32 3.3 V rail directly from a single LiFePO4 cell. A fully charged LiFePO4 cell can exceed the ESP32 3.3 V supply range, while a discharged cell may fall too low for stable WiFi operation. Use a low-quiescent-current 3.3 V regulator or buck-boost regulator sized for WiFi transmit current.
 
-### Battery Chemistry
+Battery percentage is voltage-only. It is useful for rough Li-ion tracking, but LiFePO4 has a flat discharge plateau, so `/sensor/battery_voltage` is the more trustworthy runtime indicator.
 
-Set the battery chemistry in local `secrets.yaml`:
+## MQTT and Home Assistant
 
-```yaml
-battery_chemistry: li_ion
-```
-
-Valid values are `li_ion` and `lifepo4`. The value defaults to `li_ion` if omitted. The selected chemistry controls the `/sensor/battery_level` voltage-to-percent curve and is published retained at `/diagnostic/battery_chemistry`.
-
-Battery percentage is an estimate from voltage only. It is usually useful for Li-ion cells, but LiFePO4 has a very flat discharge plateau, so the estimate is less precise between roughly 20% and 90%, especially while charging, under WiFi load, or immediately after load changes. Use `/sensor/battery_voltage` alongside the percentage when evaluating real runtime.
-
-## MQTT Topics
-
-Base topics:
+Base topic prefixes:
 
 ```text
 esp32dev: esp32-meteo-v3
 esp32c3:  esp32-meteo-c3
 ```
 
-The ESP32 Home Assistant device remains `ESP32 Meteo V3` with `esp32_meteo_v3_*` unique IDs. The ESP32-C3 Home Assistant device is `ESP32 Meteo C3` with `esp32_meteo_c3_*` unique IDs.
+Main topic families:
 
-Important ESP32 topics:
-
-| Topic | Purpose |
+| Topic family | Purpose |
 | --- | --- |
-| `esp32-meteo-v3/status` | Diagnostic lifecycle status: `online`, `sleeping`, `online; degraded: ...`, `ota_updating` |
-| `esp32-meteo-v3/control/stay_awake` | Retained Home Assistant switch command and state |
-| `esp32-meteo-v3/sensor/bmp390_temperature` | BMP390 temperature |
-| `esp32-meteo-v3/sensor/absolute_pressure` | Absolute pressure |
-| `esp32-meteo-v3/sensor/outside_temperature` | SHT41 temperature |
-| `esp32-meteo-v3/sensor/outside_humidity` | SHT41 humidity |
-| `esp32-meteo-v3/sensor/battery_voltage` | Battery voltage |
-| `esp32-meteo-v3/sensor/battery_current` | Battery current |
-| `esp32-meteo-v3/sensor/battery_power` | Battery power |
-| `esp32-meteo-v3/sensor/battery_level` | Estimated battery level |
-| `esp32-meteo-v3/sensor/solar_raw_voltage` | Solar input voltage |
-| `esp32-meteo-v3/sensor/solar_panel_current` | Solar input current |
-| `esp32-meteo-v3/sensor/solar_raw_power` | Solar input power |
-| `esp32-meteo-v3/diagnostic/reset_reason` | Last reset reason |
-| `esp32-meteo-v3/diagnostic/sensor_readiness` | Compact readiness and degraded sensor state |
-| `esp32-meteo-v3/diagnostic/battery_chemistry` | Selected battery chemistry for percentage estimate |
+| `<prefix>/sensor/...` | Retained sensor readings for temperature, humidity, pressure, battery, and solar input |
+| `<prefix>/diagnostic/...` | Retained diagnostics such as reset reason, readiness, WiFi signal, IP, and battery chemistry |
+| `<prefix>/status` | Diagnostic lifecycle text: `online`, `sleeping`, `online; degraded: ...`, `ota_updating` |
+| `<prefix>/control/stay_awake` | Retained command/state switch for keeping the node awake |
+| `homeassistant/.../.../config` | Retained Home Assistant discovery payloads |
 
-The ESP32-C3 publishes the same suffixes under `esp32-meteo-c3/`, for example `esp32-meteo-c3/status` and `esp32-meteo-c3/sensor/battery_voltage`.
+The firmware deliberately does not add `availability_topic` or `expire_after` to sensor discovery. A sleeping node should not make Home Assistant mark otherwise valid retained readings as unavailable.
 
-## Home Assistant Behavior
+MQTT connection order is intentional:
 
-The firmware is intentionally optimized for a sleepy MQTT device:
+1. Publish retained `status=online`.
+2. Subscribe to retained `stay_awake`.
+3. Process the retained stay-awake command.
+4. Subscribe to `homeassistant/status`.
+5. Publish retained Home Assistant discovery.
+6. Publish retained readings and diagnostics.
+7. Publish retained `status=sleeping` before deep sleep.
 
-- Sensor values are published retained so Home Assistant keeps the last known good state while the ESP32 sleeps.
-- Sensor discovery configs are published retained under `homeassistant/#`.
-- The firmware does not add `availability_topic` or `expire_after` to sensor discovery.
-- Intentional deep sleep publishes `status=sleeping`, then disconnects. It does not register a retained MQTT Last Will that can overwrite sleeping with offline.
-- `<topic-prefix>/status` is a diagnostic text sensor, not a Home Assistant availability source.
-- When Home Assistant publishes `online` on `homeassistant/status`, the node republishes retained discovery while awake.
+## Configuration
 
-## Setup
+Local configuration is built from `secrets.yaml`, which is intentionally ignored by Git. During PlatformIO builds, `scripts/generate_secrets_header.py` generates `src/secrets_local.h`; that generated header is also ignored.
 
-1. Install PlatformIO.
-2. Copy the example secrets file:
+Start from the tracked example:
 
-   ```sh
-   cp secrets.example.yaml secrets.yaml
-   ```
+```sh
+cp secrets.example.yaml secrets.yaml
+```
 
-3. Edit `secrets.yaml` with local WiFi, MQTT, OTA, and battery chemistry values. Use `esp32c3_wifi_static_ip` and `esp32c3_wifi_gateway` if the C3 should have a fixed IP separate from the existing ESP32 static IP.
-4. Build the target USB upload environment:
+Required values:
 
-   ```sh
-   pio run -e esp32dev
-   pio run -e esp32c3
-   ```
+| Key | Purpose |
+| --- | --- |
+| `wifi_primary_ssid` | Primary WiFi network name |
+| `wifi_primary_password` | Primary WiFi password |
+| `mqtt_host` | MQTT broker hostname or IP address |
+| `mqtt_port` | MQTT broker port |
+| `mqtt_username` | MQTT username |
+| `mqtt_password` | MQTT password |
+| `ota_password` | ArduinoOTA password |
 
-5. Upload over USB:
+Optional values:
 
-   ```sh
-   pio run -e esp32dev -t upload
-   pio run -e esp32c3 -t upload
-   ```
+| Key | Purpose |
+| --- | --- |
+| `wifi_backup_ssid`, `wifi_backup_password` | Backup WiFi network; provide both or neither |
+| `wifi_static_ip`, `wifi_gateway` | Static IP for ESP32 target; provide both or neither |
+| `esp32c3_wifi_static_ip`, `esp32c3_wifi_gateway` | Static IP for ESP32-C3 target; provide both or neither |
+| `battery_chemistry` | `li_ion` or `lifepo4`; defaults to `li_ion` |
+
+Use ignored `platformio.local.ini` for local upload overrides such as serial ports, fixed OTA IP addresses, or OTA upload flags. Keep credentials and local network details out of tracked files.
+
+## Build and Upload
+
+Install PlatformIO, create `secrets.yaml`, then build:
+
+```sh
+pio run -e esp32dev
+pio run -e esp32c3
+```
+
+Upload over USB:
+
+```sh
+pio run -e esp32dev -t upload
+pio run -e esp32c3 -t upload
+```
 
 If `pio` is not on `PATH`, use:
 
@@ -150,11 +161,9 @@ python -m platformio run -e esp32dev
 python -m platformio run -e esp32c3
 ```
 
-The ESP32 and ESP32-C3 environments publish separate MQTT topics and Home Assistant identifiers, so they can run at the same time. Keep each board on a unique static IP or let the C3 use DHCP.
-
 ## OTA
 
-Build and upload the OTA environment while the ESP32 is awake and reachable:
+OTA is available only while the node is awake. Use the retained Home Assistant `Stay Awake` switch before starting OTA, or upload during the normal wake window.
 
 ```sh
 pio run -e esp32dev_ota
@@ -163,57 +172,55 @@ pio run -e esp32c3_ota
 pio run -e esp32c3_ota -t upload
 ```
 
-OTA authentication is loaded from the generated local secrets header and is never printed to Serial. The OTA environments default to mDNS hostnames, `esp32-meteo-v3.local` and `esp32-meteo-c3.local`. Override either `upload_port` in ignored `platformio.local.ini` if your network needs fixed IP targets.
+Default OTA upload hosts:
 
-## Local Configuration
+| Environment | Default host |
+| --- | --- |
+| `esp32dev_ota` | `esp32-meteo-v3.local` |
+| `esp32c3_ota` | `esp32-meteo-c3.local` |
 
-`secrets.yaml` is required at build time and is intentionally ignored by Git. It is parsed as real YAML by `scripts/generate_secrets_header.py`, which generates `src/secrets_local.h`.
+If mDNS does not resolve reliably on your network, override `upload_port` in ignored `platformio.local.ini`.
 
-Tracked example:
+## Validation and CI
 
-```text
-secrets.example.yaml
-```
-
-Ignored local files:
-
-```text
-secrets.yaml
-src/secrets_local.h
-platformio.local.ini
-.pio/
-```
-
-## Validation
-
-Preferred local validation before firmware changes are pushed:
+Run the full local quality gate before pushing firmware changes:
 
 ```sh
 python3 scripts/check_project.py
 ```
 
-The project check requires local `secrets.yaml`. It runs whitespace checks, verifies local/generated files are not tracked, checks MQTT/Home Assistant behavior guardrails, builds all supported environments, and verifies ESP32/ESP32-C3 firmware identity strings.
+The check verifies:
 
-The same quality gate runs in GitHub Actions. It also runs Python unit tests for build-time config handling and host-side C++ tests for firmware logic that does not require ESP32 hardware.
+- required local build inputs exist;
+- whitespace is clean;
+- local/generated files are not tracked;
+- MQTT/Home Assistant behavior guardrails are preserved;
+- Python unit tests pass;
+- host-side C++ logic tests pass;
+- all four PlatformIO environments build;
+- ESP32 and ESP32-C3 firmware identity strings are correct.
 
-Manual build commands, if you want to run environments individually:
+GitHub Actions runs the same project check on pushes and pull requests. CI uses `secrets.example.yaml` placeholders only, so CI artifacts and logs must not be treated as deployable private firmware.
 
-```sh
-pio run -e esp32dev
-pio run -e esp32dev_ota
-pio run -e esp32c3
-pio run -e esp32c3_ota
-```
+Manual hardware validation still matters. Check serial logs for I2C scan results, sensor readiness, WiFi connection, MQTT connection, Home Assistant discovery, retained publishes, OTA state, and sleep state. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
 
-For hardware validation, check serial logs for I2C scan results, sensor readiness, WiFi, MQTT, Home Assistant discovery, retained publishes, and sleep or OTA state.
+## Troubleshooting
 
-## Safety Notes
+| Symptom | Check |
+| --- | --- |
+| Build fails with missing secrets | Copy `secrets.example.yaml` to ignored `secrets.yaml` and fill required keys |
+| OTA cannot find host | Try the device IP in ignored `platformio.local.ini`; mDNS `.local` support varies by network |
+| Home Assistant shows missing values after sleep | Verify MQTT states are retained and discovery has no `availability_topic` or `expire_after` |
+| Sensor value is absent | A failed or `NAN` reading is skipped so the last retained good value remains visible |
+| Battery runtime is poor | Measure board sleep current; DevKit regulators and sensor breakouts can dominate consumption |
+| LiFePO4 percentage looks wrong | Use voltage alongside percentage; LiFePO4 voltage is flat across much of the discharge curve |
 
-- Use 3.3 V I2C levels only.
-- Do not connect a LiFePO4 cell directly to the ESP32 3.3 V rail; use a suitable low-Iq regulator or buck-boost supply.
-- Match the charger module, charge voltage, charge current, and protection circuit to the installed battery chemistry.
-- Treat any single-cell Li-ion charger output above about 4.25 V as unsafe or untrusted.
-- Verify the TP5000 module variant, chemistry configuration, charge current, regulator path, and battery protection before unattended solar use.
+## Security and Releases
+
+- Do not commit `secrets.yaml`, `src/secrets_local.h`, `platformio.local.ini`, `.pio/`, or firmware binaries built with real credentials.
+- Do not publish public release `.bin` files until the firmware supports no-secrets runtime provisioning.
+- OTA, WiFi, and MQTT secrets are currently compile-time values and can be extracted from firmware images by anyone who has the binary.
+- The public repository is suitable for source review, local builds, and CI validation.
 
 ## License
 
