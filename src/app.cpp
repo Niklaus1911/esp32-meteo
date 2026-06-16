@@ -18,6 +18,24 @@
 
 namespace Esp32Meteo {
 
+namespace {
+
+bool publishReadingsWithRetry(const char* reason) {
+  Serial.printf("Publishing readings: %s\n", reason);
+  if (publishReadings()) {
+    return true;
+  }
+
+  Serial.printf("Telemetry publish failed; retrying once after %lu ms\n",
+                static_cast<unsigned long>(kTelemetryPublishRetryDelayMs));
+  waitWithMqttAndOta(kTelemetryPublishRetryDelayMs, "Telemetry publish retry wait");
+  const bool retryOk = publishReadings();
+  Serial.printf("Telemetry publish retry result: %s\n", retryOk ? "complete" : "FAILED");
+  return retryOk;
+}
+
+}  // namespace
+
 void appSetup() {
   Serial.begin(kSerialBaud);
   delay(200);
@@ -60,7 +78,7 @@ void appSetup() {
   Serial.printf("Waiting %lu ms before first sensor read after boot/wake\n",
                 static_cast<unsigned long>(kBeforeFirstReadDelayMs));
   delay(kBeforeFirstReadDelayMs);
-  publishReadings();
+  publishReadingsWithRetry("initial boot/wake publish");
   lastPublishMs = millis();
 
   if (!stayAwakeRequested) {
@@ -89,14 +107,14 @@ void appLoop() {
 
   if (!stayAwakeRequested) {
     Serial.println("Stay-awake changed to false while awake; publishing once before sleep");
-    publishReadings();
+    publishReadingsWithRetry("stay_awake disabled before sleep");
     sleepForDefaultInterval("stay_awake disabled");
   }
 
   if (millis() - lastPublishMs >= kStayAwakePublishIntervalMs) {
     Serial.printf("Stay-awake publish interval reached after %lu ms\n",
                   static_cast<unsigned long>(millis() - lastPublishMs));
-    publishReadings();
+    publishReadingsWithRetry("stay-awake interval");
     lastPublishMs = millis();
   }
 

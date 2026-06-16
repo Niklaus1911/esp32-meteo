@@ -1,6 +1,7 @@
-# Hardware schematic for esp32-meteo-v2 on a normal ESP32 dev board.
-# This is an AI-readable rebuild document for recreating the project on normal ESP32 hardware.
-# It describes the target rebuild as an esp32dev-compatible ESP32 project.
+# Historical hardware schematic for the original esp32-meteo-v2 ESPHome rebuild.
+# Current firmware in this repository is PlatformIO/Arduino and supports esp32-meteo-v3
+# plus esp32-meteo-c3 identities. Treat ESPHome/v2 firmware references below as
+# historical context; use README.md and platformio.ini for current firmware behavior.
 
 schema_version: "1.0"
 project:

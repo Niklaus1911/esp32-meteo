@@ -130,9 +130,11 @@ def allow_documented_policy_line(path: str, line: str, term: str) -> bool:
 
 
 def check_forbidden_text() -> None:
+    tracked_or_new_files = set(git_lines("ls-files"))
+    tracked_or_new_files.update(git_lines("ls-files", "--others", "--exclude-standard"))
     tracked_text_files = [
         Path(path)
-        for path in git_lines("ls-files")
+        for path in sorted(tracked_or_new_files)
         if Path(path).suffix in TEXT_FILE_SUFFIXES and not path.startswith("scripts/check_project.py")
     ]
 
@@ -164,6 +166,11 @@ def build_all_environments() -> None:
     run(command, "PlatformIO build matrix")
 
 
+def run_unit_tests() -> None:
+    run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "test_*.py"], "Python unit tests")
+    run([sys.executable, "scripts/run_host_tests.py"], "Host firmware logic tests")
+
+
 def check_firmware_identities() -> None:
     print("\n== Firmware identity strings ==")
     for environment, required_strings, forbidden_strings in IDENTITY_CHECKS:
@@ -188,6 +195,7 @@ def main() -> None:
     run(["git", "diff", "--cached", "--check"], "Staged whitespace check")
     check_no_tracked_local_files()
     check_forbidden_text()
+    run_unit_tests()
     build_all_environments()
     check_firmware_identities()
     print("\nProject check passed")

@@ -2,6 +2,6 @@
 
 namespace Esp32Meteo {
 
-void publishHomeAssistantDiscovery();
+bool publishHomeAssistantDiscovery();
 
 }  // namespace Esp32Meteo

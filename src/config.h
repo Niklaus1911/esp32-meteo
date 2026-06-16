@@ -85,6 +85,7 @@ constexpr uint32_t kWifiConnectTimeoutMs = 20UL * 1000UL;
 constexpr uint32_t kMqttConnectTimeoutMs = 10UL * 1000UL;
 constexpr uint32_t kRetainedCommandWaitMs = 5000;
 constexpr uint32_t kTelemetryFlushMs = 750;
+constexpr uint32_t kTelemetryPublishRetryDelayMs = 1000;
 constexpr uint32_t kPostTelemetryAwakeMs = 10UL * 1000UL;
 constexpr uint32_t kSleepStatusConfirmTimeoutMs = 3000;
 constexpr uint8_t kSleepStatusConfirmAttempts = 3;

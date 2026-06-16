@@ -167,7 +167,7 @@ OTA authentication is loaded from the generated local secrets header and is neve
 
 ## Local Configuration
 
-`secrets.yaml` is required at build time and is intentionally ignored by Git. It is parsed by `scripts/generate_secrets_header.py`, which generates `src/secrets_local.h`.
+`secrets.yaml` is required at build time and is intentionally ignored by Git. It is parsed as real YAML by `scripts/generate_secrets_header.py`, which generates `src/secrets_local.h`.
 
 Tracked example:
 
@@ -193,6 +193,8 @@ python3 scripts/check_project.py
 ```
 
 The project check requires local `secrets.yaml`. It runs whitespace checks, verifies local/generated files are not tracked, checks MQTT/Home Assistant behavior guardrails, builds all supported environments, and verifies ESP32/ESP32-C3 firmware identity strings.
+
+The same quality gate runs in GitHub Actions. It also runs Python unit tests for build-time config handling and host-side C++ tests for firmware logic that does not require ESP32 hardware.
 
 Manual build commands, if you want to run environments individually:
 

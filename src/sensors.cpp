@@ -98,6 +98,44 @@ void logIna226ReadDiagnostics(INA226_WE& monitor, const char* name) {
   }
 }
 
+bool valuesAreFinite(float first, float second, float third) {
+  return isfinite(first) && isfinite(second) && isfinite(third);
+}
+
+bool readIna226Measurements(INA226_WE& monitor,
+                            const char* name,
+                            float& busVoltageV,
+                            float& currentMa,
+                            float& powerW) {
+  logIna226ReadDiagnostics(monitor, name);
+
+  const float measuredBusVoltageV = monitor.getBusVoltage_V();
+  const uint8_t voltageI2cError = monitor.getI2cErrorCode();
+  const float measuredCurrentMa = monitor.getCurrent_mA();
+  const uint8_t currentI2cError = monitor.getI2cErrorCode();
+  const float measuredPowerW = monitor.getBusPower() / 1000.0f;
+  const uint8_t powerI2cError = monitor.getI2cErrorCode();
+
+  if (voltageI2cError != 0 || currentI2cError != 0 || powerI2cError != 0) {
+    Serial.printf("%s INA226 read skipped: I2C error codes voltage=%u current=%u power=%u\n",
+                  name,
+                  voltageI2cError,
+                  currentI2cError,
+                  powerI2cError);
+    return false;
+  }
+
+  if (!valuesAreFinite(measuredBusVoltageV, measuredCurrentMa, measuredPowerW)) {
+    Serial.printf("%s INA226 read skipped: invalid measurement value\n", name);
+    return false;
+  }
+
+  busVoltageV = measuredBusVoltageV;
+  currentMa = measuredCurrentMa;
+  powerW = measuredPowerW;
+  return true;
+}
+
 }  // namespace
 
 const DeviceState& deviceState() {
@@ -250,32 +288,40 @@ Reading readSensors() {
   }
 
   if (devices.batteryInaReady) {
-    logIna226ReadDiagnostics(batteryIna, "Battery");
-    // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
-    reading.batteryVoltageV = batteryIna.getBusVoltage_V();
-    reading.batteryCurrentMa = batteryIna.getCurrent_mA();
-    reading.batteryPowerW = batteryIna.getBusPower() / 1000.0f;
-    reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
-    Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
-                  BATTERY_CHEMISTRY_NAME,
-                  reading.batteryVoltageV,
-                  reading.batteryCurrentMa,
-                  reading.batteryPowerW,
-                  reading.batteryLevelPercent);
+    float busVoltageV = NAN;
+    float currentMa = NAN;
+    float powerW = NAN;
+    if (readIna226Measurements(batteryIna, "Battery", busVoltageV, currentMa, powerW)) {
+      // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
+      reading.batteryVoltageV = busVoltageV;
+      reading.batteryCurrentMa = currentMa;
+      reading.batteryPowerW = powerW;
+      reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
+      Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
+                    BATTERY_CHEMISTRY_NAME,
+                    reading.batteryVoltageV,
+                    reading.batteryCurrentMa,
+                    reading.batteryPowerW,
+                    reading.batteryLevelPercent);
+    }
   } else {
     Serial.println("Battery INA226 skipped: not ready");
   }
 
   if (devices.solarInaReady) {
-    logIna226ReadDiagnostics(solarIna, "Solar");
-    // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
-    reading.solarRawVoltageV = solarIna.getBusVoltage_V();
-    reading.solarPanelCurrentMa = solarIna.getCurrent_mA();
-    reading.solarRawPowerW = solarIna.getBusPower() / 1000.0f;
-    Serial.printf("Solar INA226: voltage %.3f V, current %.2f mA, power %.3f W\n",
-                  reading.solarRawVoltageV,
-                  reading.solarPanelCurrentMa,
-                  reading.solarRawPowerW);
+    float busVoltageV = NAN;
+    float currentMa = NAN;
+    float powerW = NAN;
+    if (readIna226Measurements(solarIna, "Solar", busVoltageV, currentMa, powerW)) {
+      // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
+      reading.solarRawVoltageV = busVoltageV;
+      reading.solarPanelCurrentMa = currentMa;
+      reading.solarRawPowerW = powerW;
+      Serial.printf("Solar INA226: voltage %.3f V, current %.2f mA, power %.3f W\n",
+                    reading.solarRawVoltageV,
+                    reading.solarPanelCurrentMa,
+                    reading.solarRawPowerW);
+    }
   } else {
     Serial.println("Solar INA226 skipped: not ready");
   }

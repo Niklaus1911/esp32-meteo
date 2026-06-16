@@ -4,7 +4,8 @@
 
 This is a PlatformIO ESP32 firmware project using the Arduino framework.
 
-- `src/main.cpp` contains the firmware entrypoint, hardware constants, sensor logic, WiFi, MQTT, Home Assistant discovery, deep sleep, and OTA handling.
+- `src/main.cpp` only contains the Arduino `setup()` and `loop()` wrappers.
+- `src/app.cpp` owns the firmware lifecycle. Focused modules under `src/` own configuration, sensors, WiFi, MQTT, Home Assistant discovery, telemetry, sleep, OTA, and pure testable logic.
 - `scripts/generate_secrets_header.py` reads local `secrets.yaml` during build and generates `src/secrets_local.h`.
 - `HARDWARE_SCHEMATIC.yaml` is the development-time hardware reference only. Do not parse, upload, or embed it at runtime.
 - `include/`, `lib/`, and `test/` are standard PlatformIO extension directories.
@@ -23,7 +24,7 @@ The build script requires `secrets.yaml` and regenerates `src/secrets_local.h` a
 
 ## Coding Style & Naming Conventions
 
-Use readable Arduino C++ with two-space indentation, `constexpr` constants, and small helper functions. Keep hardware-derived values explicit near the top of `src/main.cpp`. Use `kCamelCase` for constants, lower camel case for functions and variables, and clear MQTT topic suffixes such as `/sensor/battery_voltage`.
+Use readable Arduino C++ with two-space indentation, `constexpr` constants, and small helper functions. Keep hardware-derived values explicit in `src/config.h`. Use `kCamelCase` for constants, lower camel case for functions and variables, and clear MQTT topic suffixes such as `/sensor/battery_voltage`.
 
 Avoid runtime YAML parsing. Keep Serial logs useful, but never print WiFi, MQTT, OTA passwords, tokens, or full secret values.
 
@@ -57,6 +58,7 @@ Home Assistant must keep sensor data available while the ESP32 is in normal deep
 There is no formal unit test suite yet. Minimum validation is:
 
 - Build both environments with PlatformIO.
+- Run `python3 scripts/check_project.py` before PRs; it covers policy checks, Python tests, host C++ logic tests, PlatformIO builds, and firmware identity checks.
 - Confirm serial logs show I2C scan, sensor readiness, WiFi, MQTT, HA discovery, publishing, and sleep/OTA state.
 - Verify MQTT topics with Home Assistant or an MQTT client.
 - Confirm Home Assistant still shows retained sensor values while the ESP32 is in normal deep sleep.

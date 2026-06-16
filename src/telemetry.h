@@ -2,6 +2,6 @@
 
 namespace Esp32Meteo {
 
-void publishReadings();
+bool publishReadings();
 
 }  // namespace Esp32Meteo

@@ -3,6 +3,7 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "firmware_logic.h"
 #include "ha_discovery.h"
 #include "ota_service.h"
 #include "runtime_state.h"
@@ -14,26 +15,6 @@ namespace {
 
 WiFiClient wifiClient;
 PubSubClient mqttClientInstance(wifiClient);
-
-bool parseStayAwakePayload(const char* payload, size_t length, bool& value) {
-  String normalized;
-  normalized.reserve(length);
-  for (size_t i = 0; i < length; ++i) {
-    if (!isspace(static_cast<unsigned char>(payload[i]))) {
-      normalized += static_cast<char>(tolower(static_cast<unsigned char>(payload[i])));
-    }
-  }
-
-  if (normalized == "true" || normalized == "on" || normalized == "1" || normalized == "yes") {
-    value = true;
-    return true;
-  }
-  if (normalized == "false" || normalized == "off" || normalized == "0" || normalized == "no") {
-    value = false;
-    return true;
-  }
-  return false;
-}
 
 void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
   if (strcmp(receivedTopic, kHaStatusTopic) == 0) {
@@ -86,28 +67,25 @@ bool publishRetainedStatusAndWaitForEcho(const char* payload, uint32_t timeoutMs
   statusConfirmationReceived = false;
   statusConfirmationPending = true;
 
-  const bool statusOk = mqttClientInstance.publish(kStatusTopic, payload, true);
-  Serial.printf("MQTT publish %s = %s retained: %s\n",
-                kStatusTopic,
-                payload,
-                statusOk ? "ok" : "FAILED");
-  if (!statusOk) {
-    statusConfirmationPending = false;
-    statusConfirmationExpected = nullptr;
-    return false;
-  }
-
+  bool confirmationAvailable = true;
   if (!statusConfirmationSubscribed) {
     const bool subscribed = mqttClientInstance.subscribe(kStatusTopic, 0);
     Serial.printf("MQTT subscribe %s qos=0 for status confirmation: %s\n",
                   kStatusTopic,
                   subscribed ? "ok" : "FAILED");
     statusConfirmationSubscribed = subscribed;
-    if (!subscribed) {
-      statusConfirmationPending = false;
-      statusConfirmationExpected = nullptr;
-      return false;
-    }
+    confirmationAvailable = subscribed;
+  }
+
+  const bool statusOk = mqttClientInstance.publish(kStatusTopic, payload, true);
+  Serial.printf("MQTT publish %s = %s retained: %s\n",
+                kStatusTopic,
+                payload,
+                statusOk ? "ok" : "FAILED");
+  if (!statusOk || !confirmationAvailable) {
+    statusConfirmationPending = false;
+    statusConfirmationExpected = nullptr;
+    return false;
   }
 
   Serial.printf("Waiting up to %lu ms for broker echo of %s = %s\n",
@@ -182,6 +160,9 @@ bool connectMqtt() {
       Serial.printf("MQTT connected in %lu ms\n", static_cast<unsigned long>(millis() - started));
       const bool statusPublished = mqttClientInstance.publish(kStatusTopic, "online", true);
       Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
+      if (!statusPublished) {
+        return false;
+      }
       const bool subscribed = mqttClientInstance.subscribe(kStayAwakeTopic, 1);
       Serial.printf("MQTT subscribe %s qos=1: %s\n", kStayAwakeTopic, subscribed ? "ok" : "FAILED");
       if (!subscribed) {
@@ -205,20 +186,21 @@ bool connectMqtt() {
   return false;
 }
 
-void publishFloat(const char* suffix, float value) {
+bool publishFloat(const char* suffix, float value) {
   const String fullTopic = topic(suffix);
   if (isnan(value) || isinf(value)) {
     Serial.printf("MQTT skip %s: invalid reading\n", fullTopic.c_str());
-    return;
+    return true;
   }
 
   char payload[24];
   dtostrf(value, 0, 8, payload);
   const bool ok = mqttClientInstance.publish(fullTopic.c_str(), payload, true);
   Serial.printf("MQTT publish %s = %s retained: %s\n", fullTopic.c_str(), payload, ok ? "ok" : "FAILED");
+  return ok;
 }
 
-void publishText(const char* suffix, const char* value, bool retained) {
+bool publishText(const char* suffix, const char* value, bool retained) {
   const String fullTopic = topic(suffix);
   const bool ok = mqttClientInstance.publish(fullTopic.c_str(), value, retained);
   Serial.printf("MQTT publish %s = %s retained=%s: %s\n",
@@ -226,9 +208,10 @@ void publishText(const char* suffix, const char* value, bool retained) {
                 value,
                 retained ? "true" : "false",
                 ok ? "ok" : "FAILED");
+  return ok;
 }
 
-void publishDiscoveryPayload(const char* component, const char* objectId, const char* payload) {
+bool publishDiscoveryPayload(const char* component, const char* objectId, const char* payload) {
   char discoveryTopic[160];
   if (!formatInto(discoveryTopic,
                   sizeof(discoveryTopic),
@@ -238,7 +221,7 @@ void publishDiscoveryPayload(const char* component, const char* objectId, const 
                   component,
                   objectId)) {
     Serial.printf("HA discovery skipped for %s/%s: topic too long\n", component, objectId);
-    return;
+    return false;
   }
 
   const size_t payloadLength = strlen(payload);
@@ -248,13 +231,14 @@ void publishDiscoveryPayload(const char* component, const char* objectId, const 
                 static_cast<unsigned int>(payloadLength),
                 static_cast<unsigned int>(packetBytes),
                 static_cast<unsigned int>(kMqttBufferSize));
-  if (packetBytes > kMqttBufferSize) {
+  if (!mqttPacketFits(discoveryTopic, payloadLength, kMqttBufferSize, kMqttMaxHeaderBytes)) {
     Serial.printf("HA discovery skipped %s: MQTT packet estimate exceeds buffer\n", discoveryTopic);
-    return;
+    return false;
   }
 
   const bool ok = mqttClientInstance.publish(discoveryTopic, payload, true);
   Serial.printf("HA discovery publish %s retained: %s\n", discoveryTopic, ok ? "ok" : "FAILED");
+  return ok;
 }
 
 void flushMqtt(uint32_t durationMs) {
