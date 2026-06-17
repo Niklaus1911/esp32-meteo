@@ -6,6 +6,7 @@
 #include "config.h"
 #include "firmware_logic.h"
 #include "mqtt_client.h"
+#include "runtime_config.h"
 #include "runtime_state.h"
 #include "sensors.h"
 #include "util.h"
@@ -33,7 +34,8 @@ bool publishDiagnostics() {
   const String ipAddress = WiFi.localIP().toString();
   allOk &= publishText("/diagnostic/ip_address", ipAddress.c_str());
   allOk &= publishText("/diagnostic/reset_reason", resetReasonName(esp_reset_reason()));
-  allOk &= publishText("/diagnostic/battery_chemistry", BATTERY_CHEMISTRY_NAME);
+  allOk &= publishText("/diagnostic/battery_chemistry",
+                       batteryChemistryName(runtimeConfig().batteryChemistryId));
 
   char sensorReadiness[160];
   if (formatSensorReadiness(sensorReadiness,

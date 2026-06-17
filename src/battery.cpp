@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 #include "battery_curve.h"
-#include "config.h"
+#include "runtime_config.h"
 
 namespace Esp32Meteo {
 
@@ -12,10 +12,11 @@ float batteryLevelPercent(float voltage) {
     return NAN;
   }
 
-  if (BATTERY_CHEMISTRY_ID != kBatteryChemistryLiIon && BATTERY_CHEMISTRY_ID != kBatteryChemistryLiFePO4) {
-    Serial.printf("Unknown battery chemistry id %u; using Li-ion curve\n", BATTERY_CHEMISTRY_ID);
+  const uint8_t chemistryId = runtimeConfig().batteryChemistryId;
+  if (!isValidBatteryChemistryId(chemistryId)) {
+    Serial.printf("Unknown battery chemistry id %u; using Li-ion curve\n", chemistryId);
   }
-  return batteryLevelPercentForChemistry(BATTERY_CHEMISTRY_ID, voltage);
+  return batteryLevelPercentForChemistry(chemistryId, voltage);
 }
 
 }  // namespace Esp32Meteo

@@ -81,6 +81,12 @@ bool parseStayAwakePayload(const char* payload, size_t length, bool& value) {
   return false;
 }
 
+bool parseResetCredentialsPayload(const char* payload, size_t length) {
+  constexpr const char kExpectedPayload[] = "reset";
+  constexpr size_t kExpectedLength = sizeof(kExpectedPayload) - 1;
+  return payload && length == kExpectedLength && memcmp(payload, kExpectedPayload, kExpectedLength) == 0;
+}
+
 const char* readinessText(bool ready, const char* issue) {
   if (ready) {
     return "ready";

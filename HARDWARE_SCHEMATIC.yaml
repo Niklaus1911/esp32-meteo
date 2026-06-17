@@ -163,7 +163,7 @@ components:
     role: "Charges one single-cell battery from the solar input path."
     required: true
     configuration:
-      chemistry: "Must match battery_chemistry in secrets.yaml and the installed cell. Supported firmware values: li_ion, lifepo4."
+      chemistry: "Must match runtime battery_chemistry provisioning and the installed cell. Supported firmware values: li_ion, lifepo4."
       nominal_full_voltage:
         li_ion: "4.2V typical"
         lifepo4: "3.6V to 3.65V typical"
@@ -191,7 +191,7 @@ components:
       - terminal: "negative"
         net: "gnd"
     firmware_binding:
-      battery_chemistry_source: "secrets.yaml battery_chemistry, generated into src/secrets_local.h"
+      battery_chemistry_source: "Runtime battery_chemistry stored in ESP32 NVS"
       battery_level_curves:
         li_ion:
           source_entity: "Battery Voltage"
@@ -413,11 +413,11 @@ rebuild_steps:
   - "Assemble a common 3.3 V I2C bus: ESP32 GPIO21 to all SDA pins, GPIO22 to all SCL pins, shared GND, and 3.3 V peripheral power."
   - "Configure BMP390 address to 0x77 and SHT41 address to 0x44."
   - "Configure the solar INA226 address to 0x40 and place its 0.1 ohm shunt in series with the solar panel positive lead before TP5000 IN+."
-  - "Configure battery_chemistry in secrets.yaml as li_ion or lifepo4 to match the installed cell and charger configuration."
+  - "Provision battery_chemistry as li_ion or lifepo4 to match the installed cell and charger configuration."
   - "Configure the battery INA226 address to 0x41 and place its 0.1 ohm shunt in series with the battery positive path."
   - "Connect TP5000 for the installed single-cell chemistry: solar monitored positive to IN+, common ground to IN-/BAT-, and charger BAT+ to the battery positive path."
   - "Add a low-quiescent-current battery-to-ESP32 3.3 V regulator or buck-boost regulator, or use a board-supported power input with acceptable quiescent current. This is required but not specified by the current repository."
-  - "Flash the ESP32 target firmware with local secrets.yaml values for WiFi, MQTT, static IP, and fallback AP."
+  - "Flash the ESP32 target firmware, then provision WiFi, MQTT, OTA, optional static IP, and battery chemistry through the setup portal."
   - "Run ESPHome config validation before flashing or committing firmware changes."
   - "On first boot, watch serial logs and I2C scan output to verify devices at 0x40, 0x41, 0x44, and 0x77."
   - "Verify INA226 current sign under solar charging and battery discharge; adjust physical shunt orientation if needed."

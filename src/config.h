@@ -3,8 +3,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-#include "secrets_local.h"
-
 #define ESP32_METEO_MODEL_ESP32_DEVKIT "ESP32 DevKit weather node"
 #define ESP32_METEO_MODEL_ESP32C3_DEVKITM1 "ESP32-C3 DevKitM-1 weather node"
 #define ESP32_METEO_TOPIC_PREFIX_ESP32 "esp32-meteo-v3"
@@ -18,26 +16,22 @@
 #define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_C3
 #define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/status"
 #define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/control/stay_awake"
+#define ESP32_METEO_RESET_CREDENTIALS_TOPIC ESP32_METEO_TOPIC_PREFIX_C3 "/control/reset_credentials"
 #define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_C3
 #define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_C3
 #define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_C3
 #define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_C3
 #define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32C3_DEVKITM1
-#define ESP32_METEO_WIFI_STATIC_IP ESP32C3_WIFI_STATIC_IP
-#define ESP32_METEO_WIFI_GATEWAY ESP32C3_WIFI_GATEWAY
-#define ESP32_METEO_WIFI_HAS_STATIC_IP ESP32C3_WIFI_HAS_STATIC_IP
 #else
 #define ESP32_METEO_TOPIC_PREFIX ESP32_METEO_TOPIC_PREFIX_ESP32
 #define ESP32_METEO_STATUS_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/status"
 #define ESP32_METEO_STAY_AWAKE_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/control/stay_awake"
+#define ESP32_METEO_RESET_CREDENTIALS_TOPIC ESP32_METEO_TOPIC_PREFIX_ESP32 "/control/reset_credentials"
 #define ESP32_METEO_HA_DEVICE_IDENTIFIER ESP32_METEO_TOPIC_PREFIX_ESP32
 #define ESP32_METEO_HA_DEVICE_NAME ESP32_METEO_HA_DEVICE_NAME_ESP32
 #define ESP32_METEO_HA_UNIQUE_PREFIX ESP32_METEO_HA_UNIQUE_PREFIX_ESP32
 #define ESP32_METEO_OTA_HOSTNAME ESP32_METEO_TOPIC_PREFIX_ESP32
 #define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32_DEVKIT
-#define ESP32_METEO_WIFI_STATIC_IP WIFI_STATIC_IP
-#define ESP32_METEO_WIFI_GATEWAY WIFI_GATEWAY
-#define ESP32_METEO_WIFI_HAS_STATIC_IP WIFI_HAS_STATIC_IP
 #endif
 
 #ifndef ESP32_METEO_I2C_SDA_PIN
@@ -66,6 +60,7 @@ constexpr uint8_t kBmp390Address = 0x77;
 constexpr const char* kFirmwareName = ESP32_METEO_TOPIC_PREFIX;
 constexpr const char* kTopicPrefix = ESP32_METEO_TOPIC_PREFIX;
 constexpr const char* kStayAwakeTopic = ESP32_METEO_STAY_AWAKE_TOPIC;
+constexpr const char* kResetCredentialsTopic = ESP32_METEO_RESET_CREDENTIALS_TOPIC;
 constexpr const char* kStatusTopic = ESP32_METEO_STATUS_TOPIC;
 constexpr const char* kHaDiscoveryPrefix = "homeassistant";
 constexpr const char* kHaStatusTopic = "homeassistant/status";
@@ -75,9 +70,6 @@ constexpr const char* kHaManufacturer = "DIY";
 constexpr const char* kHaModel = ESP32_METEO_HA_MODEL;
 constexpr const char* kHaUniqueIdPrefix = ESP32_METEO_HA_UNIQUE_PREFIX;
 constexpr const char* kOtaHostname = ESP32_METEO_OTA_HOSTNAME;
-constexpr const char* kWifiStaticIp = ESP32_METEO_WIFI_STATIC_IP;
-constexpr const char* kWifiGateway = ESP32_METEO_WIFI_GATEWAY;
-constexpr bool kWifiHasStaticIp = ESP32_METEO_WIFI_HAS_STATIC_IP;
 
 constexpr uint64_t kDeepSleepSeconds = 10ULL * 60ULL;
 constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
@@ -107,8 +99,6 @@ constexpr size_t kMqttMaxHeaderBytes = 5;
 constexpr float kInaShuntOhms = 0.1f;
 constexpr float kSolarMaxCurrentA = 1.0f;
 constexpr float kBatteryMaxCurrentA = 0.8f;
-constexpr uint8_t kBatteryChemistryLiIon = 0;
-constexpr uint8_t kBatteryChemistryLiFePO4 = 1;
 
 // Set true during local serial/MQTT testing to keep the device awake without a retained MQTT command.
 // Keep false for production so the node returns to deep sleep unless MQTT explicitly requests stay-awake.

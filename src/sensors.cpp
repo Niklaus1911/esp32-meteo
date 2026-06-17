@@ -7,6 +7,7 @@
 
 #include "battery.h"
 #include "config.h"
+#include "runtime_config.h"
 #include "util.h"
 
 namespace Esp32Meteo {
@@ -298,7 +299,7 @@ Reading readSensors() {
       reading.batteryPowerW = powerW;
       reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
       Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
-                    BATTERY_CHEMISTRY_NAME,
+                    batteryChemistryName(runtimeConfig().batteryChemistryId),
                     reading.batteryVoltageV,
                     reading.batteryCurrentMa,
                     reading.batteryPowerW,

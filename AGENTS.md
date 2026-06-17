@@ -6,10 +6,11 @@ This is a PlatformIO ESP32 firmware project using the Arduino framework.
 
 - `src/main.cpp` only contains the Arduino `setup()` and `loop()` wrappers.
 - `src/app.cpp` owns the firmware lifecycle. Focused modules under `src/` own configuration, sensors, WiFi, MQTT, Home Assistant discovery, telemetry, sleep, OTA, and pure testable logic.
-- `scripts/generate_secrets_header.py` reads local `secrets.yaml` during build and generates `src/secrets_local.h`.
+- `src/runtime_config.cpp` owns runtime app configuration validation and ESP32 Preferences/NVS persistence.
+- `src/provisioning.cpp` owns WiFiManager captive-portal provisioning for WiFi and runtime app settings.
 - `HARDWARE_SCHEMATIC.yaml` is the development-time hardware reference only. Do not parse, upload, or embed it at runtime.
 - `include/`, `lib/`, and `test/` are standard PlatformIO extension directories.
-- `.pio/`, `secrets.yaml`, `src/secrets_local.h`, and `platformio.local.ini` are local/generated and ignored.
+- `.pio/` and `platformio.local.ini` are local/generated and ignored.
 
 ## Build, Test, and Development Commands
 
@@ -20,7 +21,7 @@ This is a PlatformIO ESP32 firmware project using the Arduino framework.
 - `pio run -e esp32dev_ota -t upload` uploads OTA when the ESP32 is awake and reachable.
 - If `pio` is not on `PATH`, use `python -m platformio` or your local PlatformIO virtualenv with the same arguments.
 
-The build script requires `secrets.yaml` and regenerates `src/secrets_local.h` automatically. Do not commit generated secrets.
+Firmware builds do not require local secrets. Runtime WiFi, MQTT, OTA, static IP, and battery chemistry are provisioned on-device and stored in ESP32 NVS.
 
 ## Coding Style & Naming Conventions
 
@@ -73,8 +74,8 @@ Pull requests should include:
 - What changed and why.
 - Build results for `esp32dev` and `esp32dev_ota`.
 - Any serial or MQTT evidence for behavior changes.
-- Notes about secrets, OTA, or Home Assistant discovery compatibility.
+- Notes about provisioning, OTA, or Home Assistant discovery compatibility.
 
 ## Security & Configuration Tips
 
-Keep `secrets.yaml`, `src/secrets_local.h`, and `platformio.local.ini` untracked. Store OTA auth in `platformio.local.ini`. Treat `HARDWARE_SCHEMATIC.yaml` as source documentation, not runtime configuration.
+Keep `platformio.local.ini` untracked. Do not print WiFi, MQTT, or OTA passwords. Treat `HARDWARE_SCHEMATIC.yaml` as source documentation, not runtime configuration.

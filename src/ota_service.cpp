@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "mqtt_client.h"
+#include "runtime_config.h"
 #include "runtime_state.h"
 #include "util.h"
 
@@ -16,8 +17,14 @@ void handleOta() {
 
 void initializeOta() {
   logPhase("OTA");
+  const RuntimeConfig& config = runtimeConfig();
+  if (!config.otaPassword[0]) {
+    Serial.println("OTA disabled: runtime OTA password is missing");
+    return;
+  }
+
   ArduinoOTA.setHostname(kOtaHostname);
-  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.setPassword(config.otaPassword);
 
   ArduinoOTA.onStart([]() {
     otaInProgress = true;
@@ -65,7 +72,7 @@ void initializeOta() {
 
   ArduinoOTA.begin();
   Serial.printf("ArduinoOTA ready, hostname %s, IP %s\n", kOtaHostname, WiFi.localIP().toString().c_str());
-  Serial.println("OTA password loaded from generated header and will not be printed");
+  Serial.println("OTA password loaded from runtime config and will not be printed");
 }
 
 }  // namespace Esp32Meteo

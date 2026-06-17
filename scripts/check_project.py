@@ -97,13 +97,6 @@ def pio_command() -> str:
     fail("PlatformIO executable not found; install pio or use the PlatformIO virtualenv")
 
 
-def check_required_local_files() -> None:
-    print("\n== Required local build inputs ==")
-    if not (PROJECT_DIR / "secrets.yaml").exists():
-        fail("secrets.yaml is required for PlatformIO builds")
-    print("secrets.yaml present")
-
-
 def check_no_tracked_local_files() -> None:
     tracked = set(git_lines("ls-files"))
     failures = [path for path in FORBIDDEN_TRACKED_PATHS if path in tracked]
@@ -135,7 +128,9 @@ def check_forbidden_text() -> None:
     tracked_text_files = [
         Path(path)
         for path in sorted(tracked_or_new_files)
-        if Path(path).suffix in TEXT_FILE_SUFFIXES and not path.startswith("scripts/check_project.py")
+        if Path(path).suffix in TEXT_FILE_SUFFIXES
+        and not path.startswith("scripts/check_project.py")
+        and (PROJECT_DIR / path).exists()
     ]
 
     violations: list[str] = []
@@ -167,7 +162,12 @@ def build_all_environments() -> None:
 
 
 def run_unit_tests() -> None:
-    run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "test_*.py"], "Python unit tests")
+    python_tests = sorted((PROJECT_DIR / "test").rglob("test_*.py"))
+    if python_tests:
+        run([sys.executable, "-m", "unittest", "discover", "-s", "test", "-p", "test_*.py"], "Python unit tests")
+    else:
+        print("\n== Python unit tests ==")
+        print("No Python unit tests found; skipping")
     run([sys.executable, "scripts/run_host_tests.py"], "Host firmware logic tests")
 
 
@@ -190,7 +190,6 @@ def check_firmware_identities() -> None:
 
 
 def main() -> None:
-    check_required_local_files()
     run(["git", "diff", "--check"], "Unstaged whitespace check")
     run(["git", "diff", "--cached", "--check"], "Staged whitespace check")
     check_no_tracked_local_files()

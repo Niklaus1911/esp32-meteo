@@ -4,6 +4,8 @@
 
 #include "battery_curve.h"
 #include "firmware_logic.h"
+#include "provisioning_logic.h"
+#include "runtime_config.h"
 
 using namespace Esp32Meteo;
 
@@ -20,6 +22,15 @@ void testStayAwakeParsing() {
 
   assert(!parseStayAwakePayload("maybe", 5, value));
   assert(!parseStayAwakePayload("", 0, value));
+}
+
+void testResetCredentialsParsing() {
+  assert(parseResetCredentialsPayload("reset", 5));
+  assert(!parseResetCredentialsPayload(" reset", 6));
+  assert(!parseResetCredentialsPayload("reset\n", 6));
+  assert(!parseResetCredentialsPayload("RESET", 5));
+  assert(!parseResetCredentialsPayload("", 0));
+  assert(!parseResetCredentialsPayload(nullptr, 5));
 }
 
 void testBatteryCurves() {
@@ -64,13 +75,186 @@ void testMqttPacketSizing() {
   assert(!mqttPacketFits(nullptr, 1, 256, 5));
 }
 
+RuntimeConfig makeValidRuntimeConfig() {
+  RuntimeConfig config;
+  assert(populateRuntimeConfig(config,
+                               "192.168.1.10",
+                               1883,
+                               "",
+                               "",
+                               "ota-pass",
+                               "li_ion",
+                               "",
+                               "",
+                               ""));
+  return config;
+}
+
+void testRuntimeConfigMqttPortValidation() {
+  assert(isValidMqttPort(1));
+  assert(isValidMqttPort(1883));
+  assert(isValidMqttPort(65535));
+  assert(!isValidMqttPort(0));
+  assert(!isValidMqttPort(65536));
+}
+
+void testRuntimeConfigIpv4Validation() {
+  assert(isValidIpv4Address("192.168.1.50"));
+  assert(isValidIpv4Address("0.0.0.0"));
+  assert(isValidIpv4Address("255.255.255.255"));
+  assert(!isValidIpv4Address(""));
+  assert(!isValidIpv4Address("192.168.1"));
+  assert(!isValidIpv4Address("192.168.1.256"));
+  assert(!isValidIpv4Address("192.168.1."));
+  assert(!isValidIpv4Address("192.168.one.50"));
+
+  assert(isStaticIpConfigValid("", "", ""));
+  assert(isStaticIpConfigValid("192.168.1.50", "192.168.1.1", "255.255.255.0"));
+  assert(!isStaticIpConfigValid("", "", kRuntimeConfigDefaultSubnet));
+  assert(!isStaticIpConfigValid("192.168.1.50", "", "255.255.255.0"));
+  assert(!isStaticIpConfigValid("192.168.1.50", "192.168.1.1", "999.255.255.0"));
+}
+
+void testRuntimeConfigBatteryChemistryValidation() {
+  uint8_t chemistryId = 255;
+  assert(parseBatteryChemistry("li_ion", chemistryId));
+  assert(chemistryId == kRuntimeBatteryChemistryLiIon);
+  assert(parseBatteryChemistry("LiFePO4", chemistryId));
+  assert(chemistryId == kRuntimeBatteryChemistryLiFePO4);
+  assert(parseBatteryChemistry("", chemistryId));
+  assert(chemistryId == kRuntimeBatteryChemistryLiIon);
+  assert(!parseBatteryChemistry("alkaline", chemistryId));
+  assert(strcmp(batteryChemistryName(kRuntimeBatteryChemistryLiFePO4), "LiFePO4") == 0);
+  assert(strcmp(batteryChemistryKey(kRuntimeBatteryChemistryLiIon), "li_ion") == 0);
+}
+
+void testProvisioningIpModeLogic() {
+  assert(strcmp(provisioningIpModeForConfig(false), kProvisioningIpModeDhcp) == 0);
+  assert(strcmp(provisioningIpModeForConfig(true), kProvisioningIpModeStatic) == 0);
+  assert(!provisioningIpModeIsStatic(kProvisioningIpModeDhcp));
+  assert(provisioningIpModeIsStatic(kProvisioningIpModeStatic));
+  assert(!provisioningIpModeIsStatic(nullptr));
+  assert(strcmp(provisioningStaticFieldForDhcpMode(), "") == 0);
+  assert(strcmp(provisioningSubnetForStaticMode(""), kRuntimeConfigDefaultSubnet) == 0);
+  assert(strcmp(provisioningSubnetForStaticMode(nullptr), kRuntimeConfigDefaultSubnet) == 0);
+  assert(strcmp(provisioningSubnetForStaticMode("255.255.0.0"), "255.255.0.0") == 0);
+}
+
+void testRuntimeConfigValidation() {
+  RuntimeConfig config = makeValidRuntimeConfig();
+  assert(validateRuntimeConfig(config).valid);
+  assert(config.mqttUsername[0] == '\0');
+  assert(config.mqttPassword[0] == '\0');
+
+  config = makeValidRuntimeConfig();
+  config.otaPassword[0] = '\0';
+  assert(!validateRuntimeConfig(config).valid);
+
+  config = makeValidRuntimeConfig();
+  assert(populateRuntimeConfig(config,
+                               "mqtt.local",
+                               1883,
+                               "mqtt-user",
+                               "mqtt-pass",
+                               "ota-pass",
+                               "lifepo4",
+                               "192.168.1.50",
+                               "192.168.1.1",
+                               "255.255.255.0"));
+  assert(validateRuntimeConfig(config).valid);
+  assert(config.hasStaticIp);
+  assert(config.batteryChemistryId == kRuntimeBatteryChemistryLiFePO4);
+
+  config = makeValidRuntimeConfig();
+  assert(populateRuntimeConfig(config,
+                               "mqtt.local",
+                               1883,
+                               "mqtt-user",
+                               "",
+                               "ota-pass",
+                               "li_ion",
+                               "",
+                               "",
+                               ""));
+  assert(!validateRuntimeConfig(config).valid);
+
+  config = makeValidRuntimeConfig();
+  assert(populateRuntimeConfig(config,
+                               "mqtt.local",
+                               0,
+                               "",
+                               "",
+                               "ota-pass",
+                               "li_ion",
+                               "",
+                               "",
+                               ""));
+  assert(!validateRuntimeConfig(config).valid);
+}
+
+void testRuntimeConfigNormalization() {
+  RuntimeConfig config = makeValidRuntimeConfig();
+  config.schemaVersion = 0;
+  strcpy(config.staticIp, "192.168.1.50");
+  strcpy(config.gateway, "192.168.1.1");
+  strcpy(config.subnet, "255.255.255.0");
+  config.hasStaticIp = false;
+
+  const RuntimeConfig normalized = normalizedRuntimeConfig(config);
+  assert(normalized.schemaVersion == kRuntimeConfigSchemaVersion);
+  assert(normalized.hasStaticIp);
+  assert(validateRuntimeConfig(normalized).valid);
+}
+
+void testRuntimeConfigTrimmingAndLengthLimits() {
+  RuntimeConfig config;
+  assert(populateRuntimeConfig(config,
+                               " mqtt.local ",
+                               1883,
+                               " ",
+                               "",
+                               " ota-pass ",
+                               " life-po4 ",
+                               "",
+                               "",
+                               ""));
+  assert(strcmp(config.mqttHost, "mqtt.local") == 0);
+  assert(config.mqttUsername[0] == '\0');
+  assert(config.mqttPassword[0] == '\0');
+  assert(strcmp(config.otaPassword, "ota-pass") == 0);
+  assert(config.batteryChemistryId == kRuntimeBatteryChemistryLiFePO4);
+  assert(validateRuntimeConfig(config).valid);
+
+  char tooLongHost[kRuntimeConfigMqttHostMaxLength + 2];
+  memset(tooLongHost, 'a', sizeof(tooLongHost) - 1);
+  tooLongHost[sizeof(tooLongHost) - 1] = '\0';
+  assert(!populateRuntimeConfig(config,
+                                tooLongHost,
+                                1883,
+                                "",
+                                "",
+                                "ota-pass",
+                                "li_ion",
+                                "",
+                                "",
+                                ""));
+}
+
 }  // namespace
 
 int main() {
   testStayAwakeParsing();
+  testResetCredentialsParsing();
   testBatteryCurves();
   testStatusFormatting();
   testReadinessFormatting();
   testMqttPacketSizing();
+  testRuntimeConfigMqttPortValidation();
+  testRuntimeConfigIpv4Validation();
+  testRuntimeConfigBatteryChemistryValidation();
+  testProvisioningIpModeLogic();
+  testRuntimeConfigValidation();
+  testRuntimeConfigNormalization();
+  testRuntimeConfigTrimmingAndLengthLimits();
   return 0;
 }

@@ -9,6 +9,8 @@
 #include "ha_discovery.h"
 #include "mqtt_client.h"
 #include "ota_service.h"
+#include "provisioning.h"
+#include "runtime_config.h"
 #include "runtime_state.h"
 #include "sensors.h"
 #include "sleep.h"
@@ -48,7 +50,6 @@ void appSetup() {
                 getCpuFrequencyMhz());
   Serial.printf("Reset reason: %s\n", resetReasonName(esp_reset_reason()));
   Serial.printf("MQTT topic prefix: %s\n", kTopicPrefix);
-  Serial.printf("Battery chemistry: %s (%s)\n", BATTERY_CHEMISTRY_NAME, BATTERY_CHEMISTRY_KEY);
   Serial.printf("Stay-awake publish interval: %lu ms\n", static_cast<unsigned long>(kStayAwakePublishIntervalMs));
   Serial.printf("Default deep sleep: %llu seconds\n", kDeepSleepSeconds);
   Serial.printf("Local force stay-awake flag: %s\n", kForceStayAwakeForTesting ? "enabled" : "disabled");
@@ -57,6 +58,14 @@ void appSetup() {
   Serial.println("Safety: Li-ion charger output above about 4.25 V is unsafe/untrusted.");
   Serial.println("Safety: do not power the ESP32 3.3 V rail directly from LiFePO4; use a low-Iq regulator or buck-boost.");
   Serial.println("Safety: solar panel rating, TP5000 variant, charge current, and ESP32 regulator behavior are not assumed.");
+
+  if (!ensureRuntimeProvisioning()) {
+    sleepForDefaultInterval("runtime provisioning incomplete");
+  }
+
+  Serial.printf("Battery chemistry: %s (%s)\n",
+                batteryChemistryName(runtimeConfig().batteryChemistryId),
+                batteryChemistryKey(runtimeConfig().batteryChemistryId));
 
   Wire.begin(kI2cSdaPin, kI2cSclPin);
   Serial.printf("Waiting %lu ms for I2C peripherals to stabilize after wake\n",
@@ -98,8 +107,7 @@ void appLoop() {
     sleepForDefaultInterval("connection lost");
   }
 
-  mqttClient().loop();
-  handleOta();
+  serviceMqttAndOta();
 
   if (homeAssistantDiscoveryRequested) {
     publishHomeAssistantDiscovery();

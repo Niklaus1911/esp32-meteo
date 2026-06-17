@@ -6,6 +6,7 @@
 #include "firmware_logic.h"
 #include "ha_discovery.h"
 #include "ota_service.h"
+#include "runtime_config.h"
 #include "runtime_state.h"
 #include "util.h"
 
@@ -15,6 +16,65 @@ namespace {
 
 WiFiClient wifiClient;
 PubSubClient mqttClientInstance(wifiClient);
+bool resetCredentialsRequested = false;
+bool resetCredentialsInProgress = false;
+
+void flushMqttClientOnly(uint32_t durationMs) {
+  Serial.printf("Flushing MQTT for credentials reset for %lu ms\n", static_cast<unsigned long>(durationMs));
+  const uint32_t started = millis();
+  while (millis() - started < durationMs) {
+    mqttClientInstance.loop();
+    delay(10);
+  }
+  Serial.println("MQTT credentials-reset flush complete");
+}
+
+void resetCredentialsAndRestart() {
+  resetCredentialsRequested = false;
+  if (otaInProgress) {
+    Serial.println("Credentials reset skipped: OTA update is in progress");
+    return;
+  }
+
+  resetCredentialsInProgress = true;
+  Serial.printf("Credentials reset command accepted on %s\n", kResetCredentialsTopic);
+
+  const bool statusOk = mqttClientInstance.publish(kStatusTopic, "resetting_credentials", true);
+  Serial.printf("MQTT publish %s = resetting_credentials retained: %s\n",
+                kStatusTopic,
+                statusOk ? "ok" : "FAILED");
+  flushMqttClientOnly(kTelemetryFlushMs);
+
+  const bool configCleared = clearRuntimeConfig();
+  if (!configCleared) {
+    Serial.println("Credentials reset aborted: runtime config could not be cleared");
+    const bool failureStatusOk =
+        mqttClientInstance.publish(kStatusTopic, "online; degraded: credentials_reset_failed", true);
+    Serial.printf("MQTT publish %s = online; degraded: credentials_reset_failed retained: %s\n",
+                  kStatusTopic,
+                  failureStatusOk ? "ok" : "FAILED");
+    flushMqttClientOnly(kTelemetryFlushMs);
+    resetCredentialsInProgress = false;
+    return;
+  }
+
+  if (mqttClientInstance.connected()) {
+    mqttClientInstance.disconnect();
+    Serial.println("MQTT disconnected for credentials reset");
+  }
+
+  bool wifiCleared = WiFi.disconnect(false, true);
+  if (!wifiCleared) {
+    wifiCleared = WiFi.eraseAP();
+  }
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  Serial.printf("Runtime config cleared: %s\n", configCleared ? "yes" : "no");
+  Serial.printf("Saved WiFi credentials cleared from NVS: %s\n", wifiCleared ? "yes" : "no");
+  Serial.println("Restarting after credentials reset; provisioning portal will start on next boot");
+  Serial.flush();
+  ESP.restart();
+}
 
 void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
   if (strcmp(receivedTopic, kHaStatusTopic) == 0) {
@@ -46,6 +106,22 @@ void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
     return;
   }
 
+  if (strcmp(receivedTopic, kResetCredentialsTopic) == 0) {
+    if (parseResetCredentialsPayload(reinterpret_cast<const char*>(payload), length)) {
+      if (otaInProgress) {
+        Serial.println("Ignoring credentials reset command while OTA update is in progress");
+      } else {
+        resetCredentialsRequested = true;
+        Serial.printf("Credentials reset command queued from %s\n", kResetCredentialsTopic);
+      }
+    } else {
+      Serial.printf("Ignoring invalid reset-credentials command payload on %s, length=%u\n",
+                    kResetCredentialsTopic,
+                    length);
+    }
+    return;
+  }
+
   if (strcmp(receivedTopic, kStayAwakeTopic) != 0) {
     return;
   }
@@ -59,6 +135,12 @@ void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
                   stayAwakeRequested ? "true" : "false");
   } else {
     Serial.printf("Ignoring invalid stay-awake command payload on %s, length=%u\n", kStayAwakeTopic, length);
+  }
+}
+
+void handlePendingResetCredentials() {
+  if (resetCredentialsRequested && !resetCredentialsInProgress) {
+    resetCredentialsAndRestart();
   }
 }
 
@@ -117,6 +199,7 @@ PubSubClient& mqttClient() {
 void serviceMqttAndOta() {
   handleOta();
   mqttClientInstance.loop();
+  handlePendingResetCredentials();
 }
 
 void waitWithMqttAndOta(uint32_t durationMs, const char* description) {
@@ -135,11 +218,12 @@ void waitWithMqttAndOta(uint32_t durationMs, const char* description) {
 
 bool connectMqtt() {
   logPhase("MQTT");
-  mqttClientInstance.setServer(MQTT_HOST, MQTT_PORT);
+  const RuntimeConfig& config = runtimeConfig();
+  mqttClientInstance.setServer(config.mqttHost, config.mqttPort);
   mqttClientInstance.setCallback(mqttCallback);
   const bool bufferConfigured = mqttClientInstance.setBufferSize(kMqttBufferSize);
 
-  Serial.printf("MQTT server: %s:%u\n", MQTT_HOST, MQTT_PORT);
+  Serial.printf("MQTT server: %s:%u\n", config.mqttHost, config.mqttPort);
   Serial.printf("MQTT buffer size %u bytes: %s\n",
                 static_cast<unsigned int>(kMqttBufferSize),
                 bufferConfigured ? "ok" : "FAILED");
@@ -156,7 +240,11 @@ bool connectMqtt() {
     ++attempt;
     const String clientId = String(kTopicPrefix) + "-" + String(static_cast<uint32_t>(ESP.getEfuseMac()), HEX);
     Serial.printf("MQTT connect attempt %u using client ID %s\n", attempt, clientId.c_str());
-    if (mqttClientInstance.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD)) {
+    const bool authConfigured = config.mqttUsername[0] || config.mqttPassword[0];
+    const bool connected = authConfigured
+                               ? mqttClientInstance.connect(clientId.c_str(), config.mqttUsername, config.mqttPassword)
+                               : mqttClientInstance.connect(clientId.c_str());
+    if (connected) {
       Serial.printf("MQTT connected in %lu ms\n", static_cast<unsigned long>(millis() - started));
       const bool statusPublished = mqttClientInstance.publish(kStatusTopic, "online", true);
       Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
@@ -166,6 +254,20 @@ bool connectMqtt() {
       const bool subscribed = mqttClientInstance.subscribe(kStayAwakeTopic, 1);
       Serial.printf("MQTT subscribe %s qos=1: %s\n", kStayAwakeTopic, subscribed ? "ok" : "FAILED");
       if (!subscribed) {
+        return false;
+      }
+      const bool resetCommandCleared = mqttClientInstance.publish(kResetCredentialsTopic, "", true);
+      Serial.printf("MQTT clear retained %s command: %s\n",
+                    kResetCredentialsTopic,
+                    resetCommandCleared ? "ok" : "FAILED");
+      if (!resetCommandCleared) {
+        return false;
+      }
+      const bool resetSubscribed = mqttClientInstance.subscribe(kResetCredentialsTopic, 1);
+      Serial.printf("MQTT subscribe %s qos=1: %s\n",
+                    kResetCredentialsTopic,
+                    resetSubscribed ? "ok" : "FAILED");
+      if (!resetSubscribed) {
         return false;
       }
       waitForRetainedStayAwakeCommand();

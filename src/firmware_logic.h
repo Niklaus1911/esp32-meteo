@@ -11,6 +11,7 @@ struct SensorReadiness {
 };
 
 bool parseStayAwakePayload(const char* payload, size_t length, bool& value);
+bool parseResetCredentialsPayload(const char* payload, size_t length);
 const char* readinessText(bool ready, const char* issue);
 bool formatSensorReadiness(char* buffer,
                            size_t bufferSize,

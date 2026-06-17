@@ -154,6 +154,38 @@ bool publishHaSwitchDiscovery() {
   return publishDiscoveryPayload("switch", objectId, payload);
 }
 
+bool publishHaButtonDiscovery() {
+  char objectId[96];
+  if (!formatHaObjectId(objectId, sizeof(objectId), "reset_credentials")) {
+    Serial.println("HA discovery skipped for reset_credentials: object id too long");
+    return false;
+  }
+
+  char payload[1024];
+  if (!formatInto(payload,
+                  sizeof(payload),
+                  "HA button discovery payload",
+                  "{\"name\":\"Reset Credentials\",\"unique_id\":\"%s\","
+                  "\"command_topic\":\"%s\",\"payload_press\":\"reset\","
+                  "\"entity_category\":\"config\",\"retain\":false,"
+                  "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"%s\",\"manufacturer\":\"%s\",\"model\":\"%s\",\"sw_version\":\"%s\"},"
+                  "\"origin\":{\"name\":\"%s\",\"sw_version\":\"%s\"}}",
+                  objectId,
+                  kResetCredentialsTopic,
+                  kHaDeviceIdentifier,
+                  kHaDeviceName,
+                  kHaManufacturer,
+                  kHaModel,
+                  kFirmwareName,
+                  kFirmwareName,
+                  kFirmwareName)) {
+    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
+    return false;
+  }
+
+  return publishDiscoveryPayload("button", objectId, payload);
+}
+
 constexpr HaSensorDefinition kHaSensorDefinitions[] = {
     {"bmp390_temperature", "BMP390 Temperature", "/sensor/bmp390_temperature", nullptr, "temperature", "\\u00b0C", "measurement", ""},
     {"absolute_pressure", "Absolute Pressure", "/sensor/absolute_pressure", nullptr, "atmospheric_pressure", "hPa", "measurement", ""},
@@ -187,6 +219,7 @@ bool publishHomeAssistantDiscovery() {
     allOk &= publishHaSensorDiscovery(definition);
   }
   allOk &= publishHaSwitchDiscovery();
+  allOk &= publishHaButtonDiscovery();
 
   Serial.printf("Home Assistant discovery result: %s\n", allOk ? "complete" : "FAILED");
   return allOk;

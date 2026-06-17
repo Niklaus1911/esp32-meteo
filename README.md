@@ -26,7 +26,7 @@ The project is built for a sleepy MQTT device:
 - Normal deep sleep is reported as a diagnostic `sleeping` state, not as device unavailability.
 - A retained `stay_awake` switch can keep the node online for OTA updates or live testing.
 
-Public source is ready. Public firmware binaries are intentionally not published yet because WiFi, MQTT, OTA, static IP, and battery chemistry settings are currently compiled from local `secrets.yaml`. Do not distribute `.bin` files built with real credentials.
+The firmware no longer embeds WiFi, MQTT, OTA, static IP, or battery chemistry secrets in the binary. First boot uses a WiFiManager captive portal, and app settings are stored on the device in ESP32 NVS.
 
 ## Features
 
@@ -37,9 +37,12 @@ Public source is ready. Public firmware binaries are intentionally not published
 | Telemetry | Retained MQTT states; invalid or `NAN` readings are skipped |
 | Home Assistant | Retained MQTT discovery with stable unique IDs |
 | Diagnostics | Reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, battery chemistry, lifecycle status |
+| Recovery | Home Assistant button for clearing saved credentials and reopening the setup portal |
 | OTA | ArduinoOTA while the device is awake |
 | Power tuning | 80 MHz CPU target and reduced WiFi TX power request |
 | Validation | GitHub Actions runs policy checks, Python tests, host C++ tests, and four PlatformIO builds |
+
+Firmware uses the Arduino ESP32 `min_spiffs.csv` partition table. This keeps two OTA-capable app slots and gives each slot more room than the default 4 MB layout. SPIFFS is intentionally minimized because the firmware does not use a flash filesystem.
 
 ## Supported Targets
 
@@ -89,8 +92,9 @@ Main topic families:
 | --- | --- |
 | `<prefix>/sensor/...` | Retained sensor readings for temperature, humidity, pressure, battery, and solar input |
 | `<prefix>/diagnostic/...` | Retained diagnostics such as reset reason, readiness, WiFi signal, IP, and battery chemistry |
-| `<prefix>/status` | Diagnostic lifecycle text: `online`, `sleeping`, `online; degraded: ...`, `ota_updating` |
+| `<prefix>/status` | Diagnostic lifecycle text: `online`, `sleeping`, `online; degraded: ...`, `ota_updating`, `resetting_credentials` |
 | `<prefix>/control/stay_awake` | Retained command/state switch for keeping the node awake |
+| `<prefix>/control/reset_credentials` | Non-retained command topic used by the Home Assistant `Reset Credentials` button |
 | `homeassistant/.../.../config` | Retained Home Assistant discovery payloads |
 
 The firmware deliberately does not add `availability_topic` or `expire_after` to sensor discovery. A sleeping node should not make Home Assistant mark otherwise valid retained readings as unavailable.
@@ -99,48 +103,50 @@ MQTT connection order is intentional:
 
 1. Publish retained `status=online`.
 2. Subscribe to retained `stay_awake`.
-3. Process the retained stay-awake command.
-4. Subscribe to `homeassistant/status`.
-5. Publish retained Home Assistant discovery.
-6. Publish retained readings and diagnostics.
-7. Publish retained `status=sleeping` before deep sleep.
+3. Clear any stale retained `reset_credentials` command and subscribe to the reset command topic.
+4. Process the retained stay-awake command.
+5. Subscribe to `homeassistant/status`.
+6. Publish retained Home Assistant discovery.
+7. Publish retained readings and diagnostics.
+8. Publish retained `status=sleeping` before deep sleep.
+
+Home Assistant also discovers a `Reset Credentials` button. Pressing it publishes the exact payload `reset` to `<prefix>/control/reset_credentials` while the ESP32 is awake and not updating OTA. The firmware then publishes retained `status=resetting_credentials`, clears saved runtime app config, erases saved WiFi station credentials, and reboots. The next boot starts the same WiFiManager setup portal used on first flash. This is a local device reset only; retained Home Assistant discovery topics and retained sensor states on the MQTT broker are not deleted.
 
 ## Configuration
 
-Local configuration is built from `secrets.yaml`, which is intentionally ignored by Git. During PlatformIO builds, `scripts/generate_secrets_header.py` generates `src/secrets_local.h`; that generated header is also ignored.
+Runtime setup is done on the device. On first boot, or whenever the saved runtime app config is missing or invalid, the node starts a WiFiManager setup AP named `ESP32-Meteo-Setup-<chipid>` with no timeout. Connect to that AP and fill in WiFi plus the runtime fields below. The ESP32 stays awake in setup mode until valid settings are saved or power is removed, so first-boot provisioning can consume significant battery power.
 
-Start from the tracked example:
+After valid settings are saved, the ESP32 stores them and reboots. The next boot uses the saved WiFi and runtime settings through the normal startup path.
 
-```sh
-cp secrets.example.yaml secrets.yaml
-```
+This is the first runtime-provisioned release of the project. There is no legacy compile-time-secret migration path because no production devices were already flashed with the old secrets-based firmware.
 
-Required values:
+Required runtime fields:
 
 | Key | Purpose |
 | --- | --- |
-| `wifi_primary_ssid` | Primary WiFi network name |
-| `wifi_primary_password` | Primary WiFi password |
 | `mqtt_host` | MQTT broker hostname or IP address |
 | `mqtt_port` | MQTT broker port |
-| `mqtt_username` | MQTT username |
-| `mqtt_password` | MQTT password |
 | `ota_password` | ArduinoOTA password |
 
-Optional values:
+Optional runtime fields:
 
 | Key | Purpose |
 | --- | --- |
-| `wifi_backup_ssid`, `wifi_backup_password` | Backup WiFi network; provide both or neither |
-| `wifi_static_ip`, `wifi_gateway` | Static IP for ESP32 target; provide both or neither |
-| `esp32c3_wifi_static_ip`, `esp32c3_wifi_gateway` | Static IP for ESP32-C3 target; provide both or neither |
-| `battery_chemistry` | `li_ion` or `lifepo4`; defaults to `li_ion` |
+| `mqtt_username` | MQTT username; leave both username and password empty for anonymous MQTT |
+| `mqtt_password` | MQTT password; leave both username and password empty for anonymous MQTT |
+| `ip_mode` | `DHCP` or `Static`; DHCP saves empty static IP fields |
+| `static_ip`, `gateway`, `subnet` | Static WiFi config; in Static mode provide IP and gateway. Subnet is prefilled as `255.255.255.0` and uses that value if left empty |
+| `battery_chemistry` | Portal dropdown for `Li-ion` or `LiFePO4`; defaults to `Li-ion` |
 
-Use ignored `platformio.local.ini` for local upload overrides such as serial ports, fixed OTA IP addresses, or OTA upload flags. Keep credentials and local network details out of tracked files.
+Saved WiFi credentials are managed by the ESP32 WiFi stack through WiFiManager. Saved MQTT, OTA, static IP, and battery chemistry settings are stored in ESP32 Preferences/NVS under the firmware namespace.
+
+Normal boots with saved config connect directly to the saved WiFi network. If WiFi is unavailable, the device sleeps instead of repeatedly opening the setup portal, which protects battery runtime. To intentionally reprovision an awake device, press the Home Assistant `Reset Credentials` button. If the device can no longer reach MQTT, erase NVS/flash over USB and provision again.
+
+Use ignored `platformio.local.ini` for local upload overrides such as serial ports, fixed OTA IP addresses, or OTA upload flags. Keep local network details out of tracked files.
 
 ## Build and Upload
 
-Install PlatformIO, create `secrets.yaml`, then build:
+Install PlatformIO, then build:
 
 ```sh
 pio run -e esp32dev
@@ -153,6 +159,8 @@ Upload over USB:
 pio run -e esp32dev -t upload
 pio run -e esp32c3 -t upload
 ```
+
+Flash once over USB after changing from an older partition table. OTA uploads can update firmware later, but they do not rewrite the partition table.
 
 If `pio` is not on `PATH`, use:
 
@@ -191,7 +199,6 @@ python3 scripts/check_project.py
 
 The check verifies:
 
-- required local build inputs exist;
 - whitespace is clean;
 - local/generated files are not tracked;
 - MQTT/Home Assistant behavior guardrails are preserved;
@@ -200,7 +207,7 @@ The check verifies:
 - all four PlatformIO environments build;
 - ESP32 and ESP32-C3 firmware identity strings are correct.
 
-GitHub Actions runs the same project check on pushes and pull requests. CI uses `secrets.example.yaml` placeholders only, so CI artifacts and logs must not be treated as deployable private firmware.
+GitHub Actions runs the same project check on pushes and pull requests. CI builds do not require local secrets.
 
 Manual hardware validation still matters. Check serial logs for I2C scan results, sensor readiness, WiFi connection, MQTT connection, Home Assistant discovery, retained publishes, OTA state, and sleep state. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
 
@@ -208,7 +215,10 @@ Manual hardware validation still matters. Check serial logs for I2C scan results
 
 | Symptom | Check |
 | --- | --- |
-| Build fails with missing secrets | Copy `secrets.example.yaml` to ignored `secrets.yaml` and fill required keys |
+| First boot has no normal WiFi | Connect to the `ESP32-Meteo-Setup-<chipid>` AP and complete provisioning; the setup AP has no timeout |
+| Provisioning rejects static IP settings | In Static mode, fill a valid `static_ip` and `gateway`; subnet defaults to `255.255.255.0` if empty |
+| Wrong WiFi or app config was saved | If MQTT is still reachable while awake, press Home Assistant `Reset Credentials`; otherwise erase NVS/flash over USB and provision again |
+| `Reset Credentials` does nothing | The ESP32 must be awake, connected to MQTT, and not in an OTA update; use `Stay Awake` first when possible |
 | OTA cannot find host | Try the device IP in ignored `platformio.local.ini`; mDNS `.local` support varies by network |
 | Home Assistant shows missing values after sleep | Verify MQTT states are retained and discovery has no `availability_topic` or `expire_after` |
 | Sensor value is absent | A failed or `NAN` reading is skipped so the last retained good value remains visible |
@@ -217,10 +227,10 @@ Manual hardware validation still matters. Check serial logs for I2C scan results
 
 ## Security and Releases
 
-- Do not commit `secrets.yaml`, `src/secrets_local.h`, `platformio.local.ini`, `.pio/`, or firmware binaries built with real credentials.
-- Do not publish public release `.bin` files until the firmware supports no-secrets runtime provisioning.
-- OTA, WiFi, and MQTT secrets are currently compile-time values and can be extracted from firmware images by anyone who has the binary.
-- The public repository is suitable for source review, local builds, and CI validation.
+- Do not commit `platformio.local.ini`, `.pio/`, or local firmware artifacts you do not intend to publish.
+- Public firmware binaries should not contain private WiFi, MQTT, or OTA strings; these values are provisioned at runtime.
+- Runtime config in NVS keeps secrets out of firmware binaries, but it is not physical secret protection unless flash encryption and related ESP32 security features are enabled.
+- The public repository is suitable for source review, local builds, CI validation, and no-secrets firmware builds.
 
 ## License
 

@@ -3,6 +3,7 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "runtime_config.h"
 #include "util.h"
 
 namespace Esp32Meteo {
@@ -10,7 +11,8 @@ namespace Esp32Meteo {
 namespace {
 
 bool configureStaticWifiIp() {
-  if (!kWifiHasStaticIp) {
+  const RuntimeConfig& config = runtimeConfig();
+  if (!config.hasStaticIp) {
     Serial.println("WiFi static IP not configured; using DHCP");
     return true;
   }
@@ -19,8 +21,10 @@ bool configureStaticWifiIp() {
   IPAddress gateway;
   IPAddress subnet;
 
-  if (!localIp.fromString(kWifiStaticIp) || !gateway.fromString(kWifiGateway) || !subnet.fromString(WIFI_SUBNET)) {
-    Serial.println("WiFi static IP constants are invalid; falling back to DHCP");
+  if (!localIp.fromString(config.staticIp) ||
+      !gateway.fromString(config.gateway) ||
+      !subnet.fromString(config.subnet)) {
+    Serial.println("WiFi static IP runtime config is invalid; falling back to DHCP");
     return false;
   }
 
@@ -33,39 +37,6 @@ bool configureStaticWifiIp() {
   return configured;
 }
 
-bool connectWifiSlot(const char* slotName, const char* ssid, const char* password) {
-  Serial.printf("Connecting to WiFi %s slot with timeout %lu ms\n",
-                slotName,
-                static_cast<unsigned long>(kWifiConnectTimeoutMs));
-  Serial.println("WiFi password will not be printed");
-
-  WiFi.begin(ssid, password);
-
-  const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiConnectTimeoutMs) {
-    delay(kWifiRetryDelayMs);
-    Serial.print('.');
-  }
-  Serial.println();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("WiFi %s slot failed after %lu ms, status=%d\n",
-                  slotName,
-                  static_cast<unsigned long>(millis() - started),
-                  WiFi.status());
-    WiFi.disconnect(false);
-    delay(250);
-    return false;
-  }
-
-  Serial.printf("WiFi %s slot connected in %lu ms, RSSI %d dBm, IP %s\n",
-                slotName,
-                static_cast<unsigned long>(millis() - started),
-                WiFi.RSSI(),
-                WiFi.localIP().toString().c_str());
-  return true;
-}
-
 }  // namespace
 
 bool connectWifi() {
@@ -76,17 +47,39 @@ bool connectWifi() {
   Serial.printf("WiFi TX power requested: %s\n", kWifiTxPowerLabel);
   configureStaticWifiIp();
 
-  Serial.println("WiFi credentials loaded from generated header");
-  if (connectWifiSlot("primary", WIFI_PRIMARY_SSID, WIFI_PRIMARY_PASSWORD)) {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("WiFi already connected, SSID %s, RSSI %d dBm, IP %s\n",
+                  WiFi.SSID().c_str(),
+                  WiFi.RSSI(),
+                  WiFi.localIP().toString().c_str());
     return true;
   }
 
-  if (WIFI_HAS_BACKUP) {
-    Serial.println("Primary WiFi failed; trying backup WiFi slot");
-    return connectWifiSlot("backup", WIFI_BACKUP_SSID, WIFI_BACKUP_PASSWORD);
+  Serial.printf("Connecting to saved WiFi credentials with timeout %lu ms\n",
+                static_cast<unsigned long>(kWifiConnectTimeoutMs));
+  Serial.println("WiFi password will not be printed");
+  WiFi.begin();
+
+  const uint32_t started = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiConnectTimeoutMs) {
+    delay(kWifiRetryDelayMs);
+    Serial.print('.');
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("WiFi connected in %lu ms, SSID %s, RSSI %d dBm, IP %s\n",
+                  static_cast<unsigned long>(millis() - started),
+                  WiFi.SSID().c_str(),
+                  WiFi.RSSI(),
+                  WiFi.localIP().toString().c_str());
+    return true;
   }
 
-  Serial.println("Primary WiFi failed and no backup WiFi slot is configured");
+  Serial.printf("Saved WiFi connection failed after %lu ms, status=%d; sleeping instead of opening portal\n",
+                static_cast<unsigned long>(millis() - started),
+                WiFi.status());
+  WiFi.disconnect(false);
   return false;
 }
 
