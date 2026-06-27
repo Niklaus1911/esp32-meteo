@@ -26,5 +26,6 @@ bool formatDeviceStatus(char* buffer,
                         const char* sht4xIssue,
                         const char* bmp3xxIssue);
 bool mqttPacketFits(const char* topic, size_t payloadLength, size_t bufferSize, size_t maxHeaderBytes);
+bool shouldPublishRoutineDiscovery(bool deepSleepWake, bool stayAwakeRequested);
 
 }  // namespace Esp32Meteo

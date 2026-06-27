@@ -34,10 +34,10 @@ The firmware no longer embeds WiFi, MQTT, OTA, static IP, or battery chemistry s
 | --- | --- |
 | Sleep cycle | 10 minute deep-sleep interval by default |
 | Sensors | BMP390/BMP3xx, SHT41/SHT4x, solar INA226, battery INA226 |
-| Telemetry | Retained MQTT states; invalid or `NAN` readings are skipped |
-| Home Assistant | Retained MQTT discovery with stable unique IDs |
-| Diagnostics | Reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, battery chemistry, lifecycle status |
-| Recovery | Home Assistant button for clearing saved credentials and reopening the setup portal |
+| Telemetry | Retained MQTT states published by staggered sensor group; invalid or `NAN` readings are skipped |
+| Home Assistant | Retained MQTT discovery with stable unique IDs; routine discovery runs only while stay-awake is enabled |
+| Diagnostics | Reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, battery chemistry, lifecycle status, boot phase |
+| Recovery | Home Assistant button or 4-second BOOT-button hold for clearing saved credentials and reopening the setup portal |
 | OTA | ArduinoOTA while the device is awake |
 | Power tuning | 80 MHz CPU target and reduced WiFi TX power request |
 | Validation | GitHub Actions runs policy checks, Python tests, host C++ tests, and four PlatformIO builds |
@@ -103,14 +103,14 @@ MQTT connection order is intentional:
 
 1. Publish retained `status=online`.
 2. Subscribe to retained `stay_awake`.
-3. Clear any stale retained `reset_credentials` command and subscribe to the reset command topic.
-4. Process the retained stay-awake command.
-5. Subscribe to `homeassistant/status`.
-6. Publish retained Home Assistant discovery.
-7. Publish retained readings and diagnostics.
+3. Process the retained stay-awake command.
+4. Subscribe to `homeassistant/status`.
+5. Publish retained readings and diagnostics one sensor group at a time.
+6. Clear any stale retained `reset_credentials` command and subscribe to the reset command topic when post-telemetry setup is allowed.
+7. Publish retained Home Assistant discovery after telemetry while stay-awake is enabled.
 8. Publish retained `status=sleeping` before deep sleep.
 
-Home Assistant also discovers a `Reset Credentials` button. Pressing it publishes the exact payload `reset` to `<prefix>/control/reset_credentials` while the ESP32 is awake and not updating OTA. The firmware then publishes retained `status=resetting_credentials`, clears saved runtime app config, erases saved WiFi station credentials, and reboots. The next boot starts the same WiFiManager setup portal used on first flash. This is a local device reset only; retained Home Assistant discovery topics and retained sensor states on the MQTT broker are not deleted.
+Home Assistant also discovers a `Reset Credentials` button. Pressing it publishes the exact payload `reset` to `<prefix>/control/reset_credentials` while the ESP32 is awake and not updating OTA. The same reset can be requested locally by holding the board BOOT button for 4 seconds while the firmware is awake. The firmware then publishes retained `status=resetting_credentials` when MQTT is available, clears saved runtime app config, erases saved WiFi station credentials, and reboots. The next boot starts the same WiFiManager setup portal used on first flash. This is a local device reset only; retained Home Assistant discovery topics and retained sensor states on the MQTT broker are not deleted.
 
 ## Configuration
 
@@ -140,7 +140,7 @@ Optional runtime fields:
 
 Saved WiFi credentials are managed by the ESP32 WiFi stack through WiFiManager. Saved MQTT, OTA, static IP, and battery chemistry settings are stored in ESP32 Preferences/NVS under the firmware namespace.
 
-Normal boots with saved config connect directly to the saved WiFi network. If WiFi is unavailable, the device sleeps instead of repeatedly opening the setup portal, which protects battery runtime. To intentionally reprovision an awake device, press the Home Assistant `Reset Credentials` button. If the device can no longer reach MQTT, erase NVS/flash over USB and provision again.
+Normal boots with saved config connect directly to the saved WiFi network. If WiFi is unavailable, the device sleeps instead of repeatedly opening the setup portal, which protects battery runtime. To intentionally reprovision an awake device, press the Home Assistant `Reset Credentials` button or hold BOOT for 4 seconds during a wake window. The BOOT-button path is useful when the device can no longer reach MQTT.
 
 Use ignored `platformio.local.ini` for local upload overrides such as serial ports, fixed OTA IP addresses, or OTA upload flags. Keep local network details out of tracked files.
 
@@ -209,7 +209,7 @@ The check verifies:
 
 GitHub Actions runs the same project check on pushes and pull requests. CI builds do not require local secrets.
 
-Manual hardware validation still matters. Check serial logs for I2C scan results, sensor readiness, WiFi connection, MQTT connection, Home Assistant discovery, retained publishes, OTA state, and sleep state. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
+Manual hardware validation still matters. Check serial logs and `<prefix>/diagnostic/boot_phase` for I2C scan results, sensor readiness, WiFi connection, MQTT connection, staggered retained publishes, Home Assistant discovery when expected, OTA state, and sleep state. Pre-telemetry phases are Serial-only so diagnostics cannot block first sensor publish. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
 
 ## Troubleshooting
 
@@ -217,8 +217,8 @@ Manual hardware validation still matters. Check serial logs for I2C scan results
 | --- | --- |
 | First boot has no normal WiFi | Connect to the `ESP32-Meteo-Setup-<chipid>` AP and complete provisioning; the setup AP has no timeout |
 | Provisioning rejects static IP settings | In Static mode, fill a valid `static_ip` and `gateway`; subnet defaults to `255.255.255.0` if empty |
-| Wrong WiFi or app config was saved | If MQTT is still reachable while awake, press Home Assistant `Reset Credentials`; otherwise erase NVS/flash over USB and provision again |
-| `Reset Credentials` does nothing | The ESP32 must be awake, connected to MQTT, and not in an OTA update; use `Stay Awake` first when possible |
+| Wrong WiFi or app config was saved | Press Home Assistant `Reset Credentials` while MQTT is reachable, or hold BOOT for 4 seconds during a wake window |
+| `Reset Credentials` does nothing | The MQTT button requires the ESP32 to be awake, connected to MQTT, and not in an OTA update; the BOOT-button reset requires the firmware to be awake and not in an OTA update |
 | OTA cannot find host | Try the device IP in ignored `platformio.local.ini`; mDNS `.local` support varies by network |
 | Home Assistant shows missing values after sleep | Verify MQTT states are retained and discovery has no `availability_topic` or `expire_after` |
 | Sensor value is absent | A failed or `NAN` reading is skipped so the last retained good value remains visible |

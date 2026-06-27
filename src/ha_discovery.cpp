@@ -207,21 +207,59 @@ constexpr HaSensorDefinition kHaSensorDefinitions[] = {
     {"status", "Status", nullptr, kStatusTopic, "", "", "", "diagnostic"},
 };
 
+bool haDiscoveryBudgetExceeded(uint32_t started, const char* nextItem) {
+  const uint32_t elapsedMs = millis() - started;
+  if (elapsedMs < kHaDiscoveryBudgetMs) {
+    return false;
+  }
+
+  Serial.printf("HA discovery budget exceeded before %s after %lu/%lu ms\n",
+                nextItem,
+                static_cast<unsigned long>(elapsedMs),
+                static_cast<unsigned long>(kHaDiscoveryBudgetMs));
+  publishBootPhase("ha_discovery_budget_exceeded");
+  return true;
+}
+
 }  // namespace
 
 bool publishHomeAssistantDiscovery() {
   homeAssistantDiscoveryRequested = false;
   logPhase("Home Assistant discovery");
   Serial.printf("Publishing retained discovery configs under %s/#\n", kHaDiscoveryPrefix);
+  publishBootPhase("ha_discovery_start");
 
+  const uint32_t started = millis();
   bool allOk = true;
+  bool budgetExceeded = false;
   for (const HaSensorDefinition& definition : kHaSensorDefinitions) {
+    if (haDiscoveryBudgetExceeded(started, definition.objectSuffix)) {
+      budgetExceeded = true;
+      allOk = false;
+      break;
+    }
     allOk &= publishHaSensorDiscovery(definition);
   }
-  allOk &= publishHaSwitchDiscovery();
-  allOk &= publishHaButtonDiscovery();
+
+  if (!budgetExceeded) {
+    if (haDiscoveryBudgetExceeded(started, "stay_awake")) {
+      budgetExceeded = true;
+      allOk = false;
+    } else {
+      allOk &= publishHaSwitchDiscovery();
+    }
+  }
+
+  if (!budgetExceeded) {
+    if (haDiscoveryBudgetExceeded(started, "reset_credentials")) {
+      allOk = false;
+    } else {
+      allOk &= publishHaButtonDiscovery();
+    }
+  }
 
   Serial.printf("Home Assistant discovery result: %s\n", allOk ? "complete" : "FAILED");
+  publishBootPhase(allOk ? "ha_discovery_done" : "ha_discovery_failed");
   return allOk;
 }
 

@@ -15,5 +15,7 @@ extern bool statusConfirmationSubscribed;
 extern const char* statusConfirmationExpected;
 extern uint32_t telemetryPublishCompletedMs;
 extern uint32_t lastPublishMs;
+extern uint32_t rtcBootCount;
+extern uint32_t rtcSleepEntryCount;
 
 }  // namespace Esp32Meteo

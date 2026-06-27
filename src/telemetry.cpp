@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <esp_sleep.h>
 
+#include "battery.h"
 #include "config.h"
 #include "firmware_logic.h"
 #include "mqtt_client.h"
@@ -71,26 +72,72 @@ bool publishDeviceStatus() {
   return ok;
 }
 
+void waitBetweenSensorGroups() {
+  waitWithMqttAndOta(kSensorGroupPublishGapMs, "Sensor group publish gap");
+}
+
+bool publishBmp390Group() {
+  logBootPhase("sensor_bmp390_start");
+  const Bmp390Reading reading = readBmp390Sensor();
+  bool allOk = true;
+  allOk &= publishFloat("/sensor/bmp390_temperature", reading.temperatureC);
+  allOk &= publishFloat("/sensor/absolute_pressure", reading.absolutePressureHpa);
+  publishBootPhase(allOk ? "sensor_bmp390_done" : "sensor_bmp390_failed");
+  return allOk;
+}
+
+bool publishSht41Group() {
+  logBootPhase("sensor_sht41_start");
+  const Sht41Reading reading = readSht41Sensor();
+  bool allOk = true;
+  allOk &= publishFloat("/sensor/outside_temperature", reading.temperatureC);
+  allOk &= publishFloat("/sensor/outside_humidity", reading.humidityPercent);
+  publishBootPhase(allOk ? "sensor_sht41_done" : "sensor_sht41_failed");
+  return allOk;
+}
+
+bool publishBatteryGroup() {
+  logBootPhase("sensor_battery_ina226_start");
+  const Ina226Reading reading = readBatteryIna226();
+  bool allOk = true;
+  allOk &= publishFloat("/sensor/battery_voltage", reading.voltageV);
+  allOk &= publishFloat("/sensor/battery_current", reading.currentMa);
+  allOk &= publishFloat("/sensor/battery_power", reading.powerW);
+  allOk &= publishFloat("/sensor/battery_level", batteryLevelPercent(reading.voltageV));
+  publishBootPhase(allOk ? "sensor_battery_ina226_done" : "sensor_battery_ina226_failed");
+  return allOk;
+}
+
+bool publishSolarGroup() {
+  logBootPhase("sensor_solar_ina226_start");
+  const Ina226Reading reading = readSolarIna226();
+  bool allOk = true;
+  allOk &= publishFloat("/sensor/solar_raw_voltage", reading.voltageV);
+  allOk &= publishFloat("/sensor/solar_panel_current", reading.currentMa);
+  allOk &= publishFloat("/sensor/solar_raw_power", reading.powerW);
+  publishBootPhase(allOk ? "sensor_solar_ina226_done" : "sensor_solar_ina226_failed");
+  return allOk;
+}
+
 }  // namespace
 
 bool publishReadings() {
-  logPhase("MQTT publish cycle");
-  Reading reading = readSensors();
+  logPhase("MQTT staggered publish cycle");
+  logBootPhase("telemetry_start");
   bool allOk = true;
 
-  allOk &= publishFloat("/sensor/bmp390_temperature", reading.bmpTemperatureC);
-  allOk &= publishFloat("/sensor/absolute_pressure", reading.absolutePressureHpa);
-  allOk &= publishFloat("/sensor/outside_temperature", reading.outsideTemperatureC);
-  allOk &= publishFloat("/sensor/outside_humidity", reading.outsideHumidityPercent);
-  allOk &= publishFloat("/sensor/battery_voltage", reading.batteryVoltageV);
-  allOk &= publishFloat("/sensor/battery_current", reading.batteryCurrentMa);
-  allOk &= publishFloat("/sensor/battery_power", reading.batteryPowerW);
-  allOk &= publishFloat("/sensor/battery_level", reading.batteryLevelPercent);
-  allOk &= publishFloat("/sensor/solar_raw_voltage", reading.solarRawVoltageV);
-  allOk &= publishFloat("/sensor/solar_panel_current", reading.solarPanelCurrentMa);
-  allOk &= publishFloat("/sensor/solar_raw_power", reading.solarRawPowerW);
+  allOk &= publishBmp390Group();
+  waitBetweenSensorGroups();
+  allOk &= publishSht41Group();
+  waitBetweenSensorGroups();
+  allOk &= publishBatteryGroup();
+  waitBetweenSensorGroups();
+  allOk &= publishSolarGroup();
+
+  logBootPhase("diagnostics_start");
   allOk &= publishDiagnostics();
   allOk &= publishDeviceStatus();
+  publishBootPhase(allOk ? "telemetry_done" : "telemetry_failed");
   flushMqtt(kTelemetryFlushMs);
   markTelemetryPublishCompleted();
   Serial.printf("MQTT publish cycle result: %s\n", allOk ? "complete" : "FAILED");

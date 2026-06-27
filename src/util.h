@@ -12,5 +12,6 @@ bool appendChecked(char* destination, size_t destinationSize, const char* descri
 String topic(const char* suffix);
 bool payloadEquals(const byte* payload, unsigned int length, const char* expected);
 const char* resetReasonName(esp_reset_reason_t reason);
+const char* wakeupCauseName(esp_sleep_wakeup_cause_t cause);
 
 }  // namespace Esp32Meteo

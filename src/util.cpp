@@ -99,4 +99,35 @@ const char* resetReasonName(esp_reset_reason_t reason) {
   }
 }
 
+const char* wakeupCauseName(esp_sleep_wakeup_cause_t cause) {
+  switch (cause) {
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+      return "undefined";
+    case ESP_SLEEP_WAKEUP_EXT0:
+      return "external ext0";
+    case ESP_SLEEP_WAKEUP_EXT1:
+      return "external ext1";
+    case ESP_SLEEP_WAKEUP_TIMER:
+      return "timer";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD:
+      return "touchpad";
+    case ESP_SLEEP_WAKEUP_ULP:
+      return "ulp";
+    case ESP_SLEEP_WAKEUP_GPIO:
+      return "gpio";
+    case ESP_SLEEP_WAKEUP_UART:
+      return "uart";
+    case ESP_SLEEP_WAKEUP_WIFI:
+      return "wifi";
+    case ESP_SLEEP_WAKEUP_COCPU:
+      return "coprocessor";
+    case ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG:
+      return "coprocessor trap";
+    case ESP_SLEEP_WAKEUP_BT:
+      return "bluetooth";
+    default:
+      return "unknown";
+  }
+}
+
 }  // namespace Esp32Meteo

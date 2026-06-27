@@ -7,12 +7,21 @@
 
 #include "battery.h"
 #include "config.h"
+#include "local_button.h"
 #include "runtime_config.h"
 #include "util.h"
 
 namespace Esp32Meteo {
 
 namespace {
+
+void waitWithLocalButton(uint32_t durationMs) {
+  const uint32_t started = millis();
+  while (millis() - started < durationMs) {
+    serviceLocalButton();
+    delay(10);
+  }
+}
 
 Adafruit_BMP3XX bmp;
 Adafruit_SHT4x sht4;
@@ -44,7 +53,7 @@ void configureBmp390AfterInit() {
   }
   Serial.printf("Waiting %lu ms after BMP390/BMP3xx warm-up discard\n",
                 static_cast<unsigned long>(kBmp390WarmupDiscardDelayMs));
-  delay(kBmp390WarmupDiscardDelayMs);
+  waitWithLocalButton(kBmp390WarmupDiscardDelayMs);
 }
 
 void initializeBmp390() {
@@ -75,7 +84,7 @@ void initializeBmp390() {
     if (attempt < kBmp390InitAttempts) {
       Serial.printf("Waiting %lu ms before BMP390/BMP3xx init retry\n",
                     static_cast<unsigned long>(kBmp390InitRetryDelayMs));
-      delay(kBmp390InitRetryDelayMs);
+      waitWithLocalButton(kBmp390InitRetryDelayMs);
     }
   }
 
@@ -251,19 +260,17 @@ void initializeSensors() {
 
   Serial.printf("Waiting %lu ms for sensors to settle after initialization\n",
                 static_cast<unsigned long>(kSensorPostInitSettleDelayMs));
-  delay(kSensorPostInitSettleDelayMs);
+  waitWithLocalButton(kSensorPostInitSettleDelayMs);
 }
 
-Reading readSensors() {
-  logPhase("Sensor read");
-  Reading reading;
-
+Bmp390Reading readBmp390Sensor() {
+  Bmp390Reading reading;
   if (devices.bmp390Ready) {
     if (bmp.performReading()) {
-      reading.bmpTemperatureC = bmp.temperature;
+      reading.temperatureC = bmp.temperature;
       reading.absolutePressureHpa = bmp.pressure / 100.0f;
       Serial.printf("BMP390/BMP3xx: temperature %.2f C, pressure %.2f hPa\n",
-                    reading.bmpTemperatureC,
+                    reading.temperatureC,
                     reading.absolutePressureHpa);
     } else {
       Serial.println("BMP390/BMP3xx read failed");
@@ -272,15 +279,20 @@ Reading readSensors() {
     Serial.println("BMP390/BMP3xx skipped: not ready");
   }
 
+  return reading;
+}
+
+Sht41Reading readSht41Sensor() {
+  Sht41Reading reading;
   if (devices.sht41Ready) {
     sensors_event_t humidity;
     sensors_event_t temperature;
     if (sht4.getEvent(&humidity, &temperature)) {
-      reading.outsideTemperatureC = temperature.temperature;
-      reading.outsideHumidityPercent = humidity.relative_humidity;
+      reading.temperatureC = temperature.temperature;
+      reading.humidityPercent = humidity.relative_humidity;
       Serial.printf("SHT41/SHT4x: temperature %.2f C, humidity %.2f %%\n",
-                    reading.outsideTemperatureC,
-                    reading.outsideHumidityPercent);
+                    reading.temperatureC,
+                    reading.humidityPercent);
     } else {
       Serial.println("SHT41/SHT4x read failed");
     }
@@ -288,44 +300,79 @@ Reading readSensors() {
     Serial.println("SHT41/SHT4x skipped: not ready");
   }
 
+  return reading;
+}
+
+Ina226Reading readBatteryIna226() {
+  Ina226Reading reading;
   if (devices.batteryInaReady) {
     float busVoltageV = NAN;
     float currentMa = NAN;
     float powerW = NAN;
     if (readIna226Measurements(batteryIna, "Battery", busVoltageV, currentMa, powerW)) {
       // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
-      reading.batteryVoltageV = busVoltageV;
-      reading.batteryCurrentMa = currentMa;
-      reading.batteryPowerW = powerW;
-      reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
+      reading.voltageV = busVoltageV;
+      reading.currentMa = currentMa;
+      reading.powerW = powerW;
       Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
                     batteryChemistryName(runtimeConfig().batteryChemistryId),
-                    reading.batteryVoltageV,
-                    reading.batteryCurrentMa,
-                    reading.batteryPowerW,
-                    reading.batteryLevelPercent);
+                    reading.voltageV,
+                    reading.currentMa,
+                    reading.powerW,
+                    batteryLevelPercent(reading.voltageV));
     }
   } else {
     Serial.println("Battery INA226 skipped: not ready");
   }
 
+  return reading;
+}
+
+Ina226Reading readSolarIna226() {
+  Ina226Reading reading;
   if (devices.solarInaReady) {
     float busVoltageV = NAN;
     float currentMa = NAN;
     float powerW = NAN;
     if (readIna226Measurements(solarIna, "Solar", busVoltageV, currentMa, powerW)) {
       // Current sign depends on physical INA226 shunt orientation; correct after hardware verification if needed.
-      reading.solarRawVoltageV = busVoltageV;
-      reading.solarPanelCurrentMa = currentMa;
-      reading.solarRawPowerW = powerW;
+      reading.voltageV = busVoltageV;
+      reading.currentMa = currentMa;
+      reading.powerW = powerW;
       Serial.printf("Solar INA226: voltage %.3f V, current %.2f mA, power %.3f W\n",
-                    reading.solarRawVoltageV,
-                    reading.solarPanelCurrentMa,
-                    reading.solarRawPowerW);
+                    reading.voltageV,
+                    reading.currentMa,
+                    reading.powerW);
     }
   } else {
     Serial.println("Solar INA226 skipped: not ready");
   }
+
+  return reading;
+}
+
+Reading readSensors() {
+  logPhase("Sensor read");
+  Reading reading;
+
+  const Bmp390Reading bmp390Reading = readBmp390Sensor();
+  reading.bmpTemperatureC = bmp390Reading.temperatureC;
+  reading.absolutePressureHpa = bmp390Reading.absolutePressureHpa;
+
+  const Sht41Reading sht41Reading = readSht41Sensor();
+  reading.outsideTemperatureC = sht41Reading.temperatureC;
+  reading.outsideHumidityPercent = sht41Reading.humidityPercent;
+
+  const Ina226Reading batteryReading = readBatteryIna226();
+  reading.batteryVoltageV = batteryReading.voltageV;
+  reading.batteryCurrentMa = batteryReading.currentMa;
+  reading.batteryPowerW = batteryReading.powerW;
+  reading.batteryLevelPercent = batteryLevelPercent(reading.batteryVoltageV);
+
+  const Ina226Reading solarReading = readSolarIna226();
+  reading.solarRawVoltageV = solarReading.voltageV;
+  reading.solarPanelCurrentMa = solarReading.currentMa;
+  reading.solarRawPowerW = solarReading.powerW;
 
   return reading;
 }

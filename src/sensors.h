@@ -33,9 +33,29 @@ struct Reading {
   float solarRawPowerW = NAN;
 };
 
+struct Bmp390Reading {
+  float temperatureC = NAN;
+  float absolutePressureHpa = NAN;
+};
+
+struct Sht41Reading {
+  float temperatureC = NAN;
+  float humidityPercent = NAN;
+};
+
+struct Ina226Reading {
+  float voltageV = NAN;
+  float currentMa = NAN;
+  float powerW = NAN;
+};
+
 const DeviceState& deviceState();
 void scanI2cBus();
 void initializeSensors();
+Bmp390Reading readBmp390Sensor();
+Sht41Reading readSht41Sensor();
+Ina226Reading readBatteryIna226();
+Ina226Reading readSolarIna226();
 Reading readSensors();
 
 }  // namespace Esp32Meteo

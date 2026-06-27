@@ -3,6 +3,7 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "local_button.h"
 #include "runtime_config.h"
 #include "util.h"
 
@@ -58,10 +59,18 @@ bool connectWifi() {
   Serial.printf("Connecting to saved WiFi credentials with timeout %lu ms\n",
                 static_cast<unsigned long>(kWifiConnectTimeoutMs));
   Serial.println("WiFi password will not be printed");
+  Serial.printf("Waiting %lu ms before WiFi.begin() to reduce wake current step\n",
+                static_cast<unsigned long>(kPreWifiStartStabilizeMs));
+  const uint32_t preWifiStarted = millis();
+  while (millis() - preWifiStarted < kPreWifiStartStabilizeMs) {
+    serviceLocalButton();
+    delay(10);
+  }
   WiFi.begin();
 
   const uint32_t started = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiConnectTimeoutMs) {
+    serviceLocalButton();
     delay(kWifiRetryDelayMs);
     Serial.print('.');
   }

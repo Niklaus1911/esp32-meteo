@@ -34,6 +34,14 @@
 #define ESP32_METEO_DEFAULT_HA_MODEL ESP32_METEO_MODEL_ESP32_DEVKIT
 #endif
 
+#ifndef ESP32_METEO_BOOT_BUTTON_PIN
+#ifdef ESP32_METEO_TARGET_C3
+#define ESP32_METEO_BOOT_BUTTON_PIN 9
+#else
+#define ESP32_METEO_BOOT_BUTTON_PIN 0
+#endif
+#endif
+
 #ifndef ESP32_METEO_I2C_SDA_PIN
 #define ESP32_METEO_I2C_SDA_PIN 21
 #endif
@@ -49,6 +57,7 @@
 namespace Esp32Meteo {
 
 constexpr uint32_t kSerialBaud = 115200;
+constexpr uint8_t kBootButtonPin = static_cast<uint8_t>(ESP32_METEO_BOOT_BUTTON_PIN);
 constexpr uint8_t kI2cSdaPin = static_cast<uint8_t>(ESP32_METEO_I2C_SDA_PIN);
 constexpr uint8_t kI2cSclPin = static_cast<uint8_t>(ESP32_METEO_I2C_SCL_PIN);
 
@@ -75,21 +84,32 @@ constexpr uint64_t kDeepSleepSeconds = 10ULL * 60ULL;
 constexpr uint32_t kStayAwakePublishIntervalMs = 10UL * 1000UL;
 constexpr uint32_t kWifiConnectTimeoutMs = 20UL * 1000UL;
 constexpr uint32_t kMqttConnectTimeoutMs = 10UL * 1000UL;
+constexpr uint16_t kMqttSocketTimeoutSeconds = 3;
+constexpr uint32_t kMqttNetworkTimeoutMs = 3000;
+constexpr uint32_t kMqttPostOnlineSetupBudgetMs = 20UL * 1000UL;
+constexpr uint32_t kHaDiscoveryBudgetMs = 12UL * 1000UL;
 constexpr uint32_t kRetainedCommandWaitMs = 5000;
 constexpr uint32_t kTelemetryFlushMs = 750;
 constexpr uint32_t kTelemetryPublishRetryDelayMs = 1000;
+constexpr uint32_t kSensorGroupPublishGapMs = 1000;
 constexpr uint32_t kPostTelemetryAwakeMs = 10UL * 1000UL;
+constexpr uint32_t kBootButtonHoldMs = 4000;
+constexpr uint32_t kBootButtonDebounceMs = 50;
 constexpr uint32_t kSleepStatusConfirmTimeoutMs = 3000;
 constexpr uint8_t kSleepStatusConfirmAttempts = 3;
 constexpr uint32_t kPostSleepStatusGraceMs = 3000;
 constexpr uint32_t kWifiRetryDelayMs = 250;
 constexpr uint32_t kMqttRetryDelayMs = 500;
+constexpr uint32_t kDeepSleepWakeStabilizeMs = 2500;
+constexpr uint32_t kPreWifiStartStabilizeMs = 1000;
 constexpr uint32_t kI2cPowerStabilizeDelayMs = 1000;
 constexpr uint32_t kSensorPostInitSettleDelayMs = 1000;
 constexpr uint32_t kBmp390InitRetryDelayMs = 1000;
 constexpr uint32_t kBmp390WarmupDiscardDelayMs = 250;
 constexpr uint32_t kBeforeFirstReadDelayMs = 500;
 constexpr uint8_t kBmp390InitAttempts = 3;
+constexpr uint8_t kI2cRecoveryClockPulses = 9;
+constexpr uint32_t kI2cRecoveryPulseDelayUs = 5;
 constexpr uint32_t kCpuFrequencyMhz = 80;
 constexpr wifi_power_t kWifiTxPower = WIFI_POWER_11dBm;
 constexpr const char* kWifiTxPowerLabel = "11 dBm";

@@ -28,6 +28,7 @@ def main() -> None:
             str(PROJECT_DIR / "test" / "host" / "test_firmware_logic.cpp"),
             str(PROJECT_DIR / "src" / "firmware_logic.cpp"),
             str(PROJECT_DIR / "src" / "battery_curve.cpp"),
+            str(PROJECT_DIR / "src" / "local_button_logic.cpp"),
             str(PROJECT_DIR / "src" / "runtime_config.cpp"),
             str(PROJECT_DIR / "src" / "provisioning_logic.cpp"),
             "-o",

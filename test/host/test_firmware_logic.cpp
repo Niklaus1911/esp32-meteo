@@ -4,6 +4,7 @@
 
 #include "battery_curve.h"
 #include "firmware_logic.h"
+#include "local_button_logic.h"
 #include "provisioning_logic.h"
 #include "runtime_config.h"
 
@@ -73,6 +74,40 @@ void testMqttPacketSizing() {
   assert(mqttPacketFits("homeassistant/sensor/device/config", 100, 256, 5));
   assert(!mqttPacketFits("homeassistant/sensor/device/config", 250, 256, 5));
   assert(!mqttPacketFits(nullptr, 1, 256, 5));
+}
+
+void testRoutineDiscoveryPolicy() {
+  assert(!shouldPublishRoutineDiscovery(false, false));
+  assert(shouldPublishRoutineDiscovery(false, true));
+  assert(!shouldPublishRoutineDiscovery(true, false));
+  assert(shouldPublishRoutineDiscovery(true, true));
+}
+
+void testLongPressButtonLogic() {
+  LongPressButtonState state;
+  assert(updateLongPressButton(state, false, 0, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 10, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, false, 20, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 100, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 149, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 150, 50, 4000) == LongPressButtonEvent::Pressed);
+  assert(updateLongPressButton(state, true, 4149, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 4150, 50, 4000) == LongPressButtonEvent::Triggered);
+  assert(updateLongPressButton(state, true, 5000, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, false, 5010, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, false, 5060, 50, 4000) == LongPressButtonEvent::Released);
+  assert(updateLongPressButton(state, true, 6000, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 6050, 50, 4000) == LongPressButtonEvent::Pressed);
+  assert(updateLongPressButton(state, true, 10050, 50, 4000) == LongPressButtonEvent::Triggered);
+}
+
+void testLongPressButtonShortPressDoesNotTrigger() {
+  LongPressButtonState state;
+  assert(updateLongPressButton(state, false, 0, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 100, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, true, 150, 50, 4000) == LongPressButtonEvent::Pressed);
+  assert(updateLongPressButton(state, false, 1000, 50, 4000) == LongPressButtonEvent::None);
+  assert(updateLongPressButton(state, false, 1050, 50, 4000) == LongPressButtonEvent::Released);
 }
 
 RuntimeConfig makeValidRuntimeConfig() {
@@ -249,6 +284,9 @@ int main() {
   testStatusFormatting();
   testReadinessFormatting();
   testMqttPacketSizing();
+  testRoutineDiscoveryPolicy();
+  testLongPressButtonLogic();
+  testLongPressButtonShortPressDoesNotTrigger();
   testRuntimeConfigMqttPortValidation();
   testRuntimeConfigIpv4Validation();
   testRuntimeConfigBatteryChemistryValidation();

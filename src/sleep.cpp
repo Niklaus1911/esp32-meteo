@@ -1,5 +1,6 @@
 #include "sleep.h"
 
+#include <Wire.h>
 #include <WiFi.h>
 #include <esp_sleep.h>
 
@@ -11,6 +12,15 @@
 namespace Esp32Meteo {
 
 namespace {
+
+void releaseI2cPinsBeforeSleep() {
+  Wire.end();
+  pinMode(kI2cSdaPin, INPUT);
+  pinMode(kI2cSclPin, INPUT);
+  Serial.printf("I2C stopped and pins released before deep sleep: SDA GPIO%u, SCL GPIO%u\n",
+                static_cast<unsigned int>(kI2cSdaPin),
+                static_cast<unsigned int>(kI2cSclPin));
+}
 
 void waitForPostTelemetryAwakeWindow() {
   if (!telemetryPublishCompleted) {
@@ -44,6 +54,7 @@ void sleepForDefaultInterval(const char* reason) {
     delay(100);
   }
 
+  publishBootPhase("sleep_prepare");
   Serial.printf("Preparing deep sleep for %llu seconds: %s\n", kDeepSleepSeconds, reason);
   waitForPostTelemetryAwakeWindow();
 
@@ -60,6 +71,9 @@ void sleepForDefaultInterval(const char* reason) {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   Serial.println("WiFi disconnected and radio turned off");
+  releaseI2cPinsBeforeSleep();
+  ++rtcSleepEntryCount;
+  Serial.printf("RTC sleep entry counter: %lu\n", static_cast<unsigned long>(rtcSleepEntryCount));
   esp_sleep_enable_timer_wakeup(kDeepSleepSeconds * 1000000ULL);
   Serial.println("Deep-sleep timer configured");
   Serial.printf("Entering deep sleep for %llu seconds now\n", kDeepSleepSeconds);
