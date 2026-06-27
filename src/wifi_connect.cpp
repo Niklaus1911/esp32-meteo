@@ -14,7 +14,7 @@ namespace {
 bool configureStaticWifiIp() {
   const RuntimeConfig& config = runtimeConfig();
   if (!config.hasStaticIp) {
-    Serial.println("WiFi static IP not configured; using DHCP");
+    Serial.printf("WiFi static IP %s; using DHCP\n", serialEnabledDisabled(false));
     return true;
   }
 
@@ -25,16 +25,26 @@ bool configureStaticWifiIp() {
   if (!localIp.fromString(config.staticIp) ||
       !gateway.fromString(config.gateway) ||
       !subnet.fromString(config.subnet)) {
-    Serial.println("WiFi static IP runtime config is invalid; falling back to DHCP");
+    Serial.printf("%sWiFi static IP runtime config is invalid%s; falling back to DHCP\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     return false;
   }
 
   const bool configured = WiFi.config(localIp, gateway, subnet);
-  Serial.printf("WiFi static IP config %s, IP %s, gateway %s, subnet %s\n",
+  Serial.printf("WiFi static IP config %s%s%s, IP %s%s%s, gateway %s%s%s, subnet %s%s%s\n",
+                serialStyle(configured ? SerialStyle::Success : SerialStyle::Error),
                 configured ? "applied" : "FAILED",
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 localIp.toString().c_str(),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 gateway.toString().c_str(),
-                subnet.toString().c_str());
+                serialReset(),
+                serialStyle(SerialStyle::Value),
+                subnet.toString().c_str(),
+                serialReset());
   return configured;
 }
 
@@ -45,14 +55,25 @@ bool connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);
   WiFi.setTxPower(kWifiTxPower);
-  Serial.printf("WiFi TX power requested: %s\n", kWifiTxPowerLabel);
+  Serial.printf("WiFi TX power requested: %s%s%s\n",
+                serialStyle(SerialStyle::Value),
+                kWifiTxPowerLabel,
+                serialReset());
   configureStaticWifiIp();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("WiFi already connected, SSID %s, RSSI %d dBm, IP %s\n",
+    Serial.printf("%sWiFi already connected%s, SSID %s%s%s, RSSI %s%d dBm%s, IP %s%s%s\n",
+                  serialStyle(SerialStyle::Success),
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   WiFi.SSID().c_str(),
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   WiFi.RSSI(),
-                  WiFi.localIP().toString().c_str());
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
+                  WiFi.localIP().toString().c_str(),
+                  serialReset());
     return true;
   }
 
@@ -77,16 +98,30 @@ bool connectWifi() {
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("WiFi connected in %lu ms, SSID %s, RSSI %d dBm, IP %s\n",
+    Serial.printf("%sWiFi connected%s in %s%lu ms%s, SSID %s%s%s, RSSI %s%d dBm%s, IP %s%s%s\n",
+                  serialStyle(SerialStyle::Success),
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   static_cast<unsigned long>(millis() - started),
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   WiFi.SSID().c_str(),
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   WiFi.RSSI(),
-                  WiFi.localIP().toString().c_str());
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
+                  WiFi.localIP().toString().c_str(),
+                  serialReset());
     return true;
   }
 
-  Serial.printf("Saved WiFi connection failed after %lu ms, status=%d; sleeping instead of opening portal\n",
+  Serial.printf("%sSaved WiFi connection failed%s after %s%lu ms%s, status=%d; sleeping instead of opening portal\n",
+                serialStyle(SerialStyle::Error),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 static_cast<unsigned long>(millis() - started),
+                serialReset(),
                 WiFi.status());
   WiFi.disconnect(false);
   return false;

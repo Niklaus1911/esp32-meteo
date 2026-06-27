@@ -46,9 +46,13 @@ void resetCredentialsAndRestart() {
   Serial.printf("Credentials reset request accepted from %s\n", source);
 
   const bool statusOk = mqttClientInstance.publish(kStatusTopic, "resetting_credentials", true);
-  Serial.printf("MQTT publish %s = resetting_credentials retained: %s\n",
+  Serial.printf("MQTT publish %s%s%s = %sresetting_credentials%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
                 kStatusTopic,
-                statusOk ? "ok" : "FAILED");
+                serialReset(),
+                serialStyle(SerialStyle::Value),
+                serialReset(),
+                serialOkFailed(statusOk));
   flushMqttClientOnly(kTelemetryFlushMs);
 
   const bool configCleared = clearRuntimeConfig();
@@ -56,9 +60,13 @@ void resetCredentialsAndRestart() {
     Serial.println("Credentials reset aborted: runtime config could not be cleared");
     const bool failureStatusOk =
         mqttClientInstance.publish(kStatusTopic, "online; degraded: credentials_reset_failed", true);
-    Serial.printf("MQTT publish %s = online; degraded: credentials_reset_failed retained: %s\n",
+    Serial.printf("MQTT publish %s%s%s = %sonline; degraded: credentials_reset_failed%s retained: %s\n",
+                  serialStyle(SerialStyle::Topic),
                   kStatusTopic,
-                  failureStatusOk ? "ok" : "FAILED");
+                  serialReset(),
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialOkFailed(failureStatusOk));
     flushMqttClientOnly(kTelemetryFlushMs);
     resetCredentialsInProgress = false;
     return;
@@ -131,9 +139,11 @@ void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
   if (parseStayAwakePayload(reinterpret_cast<const char*>(payload), length, parsedValue)) {
     stayAwakeRequested = parsedValue;
     stayAwakeCommandReceived = true;
-    Serial.printf("Stay-awake command received on %s: %s\n",
+    Serial.printf("Stay-awake command received on %s%s%s: %s\n",
+                  serialStyle(SerialStyle::Topic),
                   kStayAwakeTopic,
-                  stayAwakeRequested ? "true" : "false");
+                  serialReset(),
+                  serialTrueFalse(stayAwakeRequested));
   } else {
     Serial.printf("Ignoring invalid stay-awake command payload on %s, length=%u\n", kStayAwakeTopic, length);
   }
@@ -153,18 +163,24 @@ bool publishRetainedStatusAndWaitForEcho(const char* payload, uint32_t timeoutMs
   bool confirmationAvailable = true;
   if (!statusConfirmationSubscribed) {
     const bool subscribed = mqttClientInstance.subscribe(kStatusTopic, 0);
-    Serial.printf("MQTT subscribe %s qos=0 for status confirmation: %s\n",
+    Serial.printf("MQTT subscribe %s%s%s qos=0 for status confirmation: %s\n",
+                  serialStyle(SerialStyle::Topic),
                   kStatusTopic,
-                  subscribed ? "ok" : "FAILED");
+                  serialReset(),
+                  serialOkFailed(subscribed));
     statusConfirmationSubscribed = subscribed;
     confirmationAvailable = subscribed;
   }
 
   const bool statusOk = mqttClientInstance.publish(kStatusTopic, payload, true);
-  Serial.printf("MQTT publish %s = %s retained: %s\n",
+  Serial.printf("MQTT publish %s%s%s = %s%s%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
                 kStatusTopic,
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 payload,
-                statusOk ? "ok" : "FAILED");
+                serialReset(),
+                serialOkFailed(statusOk));
   if (!statusOk || !confirmationAvailable) {
     statusConfirmationPending = false;
     statusConfirmationExpected = nullptr;
@@ -184,10 +200,16 @@ bool publishRetainedStatusAndWaitForEcho(const char* payload, uint32_t timeoutMs
   const bool confirmed = statusConfirmationReceived;
   statusConfirmationPending = false;
   statusConfirmationExpected = nullptr;
-  Serial.printf("MQTT broker echo for %s = %s: %s\n",
+  Serial.printf("MQTT broker echo for %s%s%s = %s%s%s: %s%s%s\n",
+                serialStyle(SerialStyle::Topic),
                 kStatusTopic,
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 payload,
-                confirmed ? "confirmed" : "not confirmed");
+                serialReset(),
+                serialStyle(confirmed ? SerialStyle::Success : SerialStyle::Warning),
+                confirmed ? "confirmed" : "not confirmed",
+                serialReset());
   return confirmed;
 }
 
@@ -203,6 +225,15 @@ bool mqttPostOnlineBudgetExceeded(uint32_t started, const char* phase) {
                 static_cast<unsigned long>(kMqttPostOnlineSetupBudgetMs));
   logBootPhase("mqtt_post_online_budget_exceeded");
   return true;
+}
+
+void recordSetupPhase(const char* phase) {
+  if (telemetryPublishCompleted) {
+    publishBootPhase(phase);
+    return;
+  }
+
+  logBootPhase(phase);
 }
 
 }  // namespace
@@ -248,7 +279,14 @@ bool publishBootPhase(const char* phase) {
 
   const String fullTopic = topic("/diagnostic/boot_phase");
   const bool ok = mqttClientInstance.publish(fullTopic.c_str(), payload, true);
-  Serial.printf("MQTT publish %s = %s retained: %s\n", fullTopic.c_str(), payload, ok ? "ok" : "FAILED");
+  Serial.printf("MQTT publish %s%s%s = %s%s%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
+                fullTopic.c_str(),
+                serialReset(),
+                serialStyle(SerialStyle::Muted),
+                payload,
+                serialReset(),
+                serialOkFailed(ok));
   return ok;
 }
 
@@ -306,16 +344,20 @@ bool connectMqtt() {
   mqttResetControlsConfigured = false;
   statusConfirmationSubscribed = false;
 
-  Serial.printf("MQTT server: %s:%u\n", config.mqttHost, config.mqttPort);
+  Serial.printf("MQTT server: %s%s:%u%s\n",
+                serialStyle(SerialStyle::Value),
+                config.mqttHost,
+                config.mqttPort,
+                serialReset());
   Serial.printf("MQTT socket timeout: %u seconds, network timeout: %lu ms\n",
                 static_cast<unsigned int>(kMqttSocketTimeoutSeconds),
                 static_cast<unsigned long>(kMqttNetworkTimeoutMs));
   Serial.printf("MQTT buffer size %u bytes: %s\n",
                 static_cast<unsigned int>(kMqttBufferSize),
-                bufferConfigured ? "ok" : "FAILED");
-  Serial.printf("MQTT client ID prefix: %s\n", kTopicPrefix);
-  Serial.printf("MQTT status topic: %s\n", kStatusTopic);
-  Serial.printf("MQTT stay-awake topic: %s\n", kStayAwakeTopic);
+                serialOkFailed(bufferConfigured));
+  Serial.printf("MQTT client ID prefix: %s%s%s\n", serialStyle(SerialStyle::Topic), kTopicPrefix, serialReset());
+  Serial.printf("MQTT status topic: %s%s%s\n", serialStyle(SerialStyle::Topic), kStatusTopic, serialReset());
+  Serial.printf("MQTT stay-awake topic: %s%s%s\n", serialStyle(SerialStyle::Topic), kStayAwakeTopic, serialReset());
   if (!bufferConfigured) {
     return false;
   }
@@ -331,10 +373,19 @@ bool connectMqtt() {
                                ? mqttClientInstance.connect(clientId.c_str(), config.mqttUsername, config.mqttPassword)
                                : mqttClientInstance.connect(clientId.c_str());
     if (connected) {
-      Serial.printf("MQTT connected in %lu ms\n", static_cast<unsigned long>(millis() - started));
+      Serial.printf("%sMQTT connected%s in %lu ms\n",
+                    serialStyle(SerialStyle::Success),
+                    serialReset(),
+                    static_cast<unsigned long>(millis() - started));
       logBootPhase("mqtt_connected");
       const bool statusPublished = mqttClientInstance.publish(kStatusTopic, "online", true);
-      Serial.printf("MQTT publish %s = online retained: %s\n", kStatusTopic, statusPublished ? "ok" : "FAILED");
+      Serial.printf("MQTT publish %s%s%s = %sonline%s retained: %s\n",
+                    serialStyle(SerialStyle::Topic),
+                    kStatusTopic,
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    serialReset(),
+                    serialOkFailed(statusPublished));
       if (!statusPublished) {
         logBootPhase("status_online_failed");
         return false;
@@ -344,7 +395,11 @@ bool connectMqtt() {
       const uint32_t postOnlineStarted = millis();
       logBootPhase("stay_awake_subscribe_start");
       const bool subscribed = mqttClientInstance.subscribe(kStayAwakeTopic, 1);
-      Serial.printf("MQTT subscribe %s qos=1: %s\n", kStayAwakeTopic, subscribed ? "ok" : "FAILED");
+      Serial.printf("MQTT subscribe %s%s%s qos=1: %s\n",
+                    serialStyle(SerialStyle::Topic),
+                    kStayAwakeTopic,
+                    serialReset(),
+                    serialOkFailed(subscribed));
       if (!subscribed) {
         logBootPhase("stay_awake_subscribe_failed");
         return false;
@@ -359,7 +414,11 @@ bool connectMqtt() {
       }
       logBootPhase("ha_status_subscribe_start");
       const bool haSubscribed = mqttClientInstance.subscribe(kHaStatusTopic, 0);
-      Serial.printf("MQTT subscribe %s qos=0: %s\n", kHaStatusTopic, haSubscribed ? "ok" : "FAILED");
+      Serial.printf("MQTT subscribe %s%s%s qos=0: %s\n",
+                    serialStyle(SerialStyle::Topic),
+                    kHaStatusTopic,
+                    serialReset(),
+                    serialOkFailed(haSubscribed));
       if (!haSubscribed) {
         logBootPhase("ha_status_subscribe_failed");
         return false;
@@ -368,11 +427,16 @@ bool connectMqtt() {
       if (mqttPostOnlineBudgetExceeded(postOnlineStarted, "telemetry handoff")) {
         return false;
       }
+      configureMqttResetControls();
+      publishHomeAssistantDiscovery();
       logBootPhase("mqtt_ready_for_telemetry");
       return true;
     }
 
-    Serial.printf("MQTT connect failed, rc=%d\n", mqttClientInstance.state());
+    Serial.printf("%sMQTT connect failed%s, rc=%d\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset(),
+                  mqttClientInstance.state());
     waitWithMqttAndOta(kMqttRetryDelayMs, "MQTT connect retry wait");
   }
 
@@ -386,22 +450,26 @@ bool configureMqttResetControls() {
     return true;
   }
 
-  publishBootPhase("reset_controls_start");
+  recordSetupPhase("reset_controls_start");
   const bool resetCommandCleared = mqttClientInstance.publish(kResetCredentialsTopic, "", true);
-  Serial.printf("MQTT clear retained %s command: %s\n",
+  Serial.printf("MQTT clear retained %s%s%s command: %s\n",
+                serialStyle(SerialStyle::Topic),
                 kResetCredentialsTopic,
-                resetCommandCleared ? "ok" : "FAILED");
+                serialReset(),
+                serialOkFailed(resetCommandCleared));
   if (!resetCommandCleared) {
-    publishBootPhase("reset_controls_failed");
+    recordSetupPhase("reset_controls_failed");
     return false;
   }
 
   const bool resetSubscribed = mqttClientInstance.subscribe(kResetCredentialsTopic, 1);
-  Serial.printf("MQTT subscribe %s qos=1: %s\n",
+  Serial.printf("MQTT subscribe %s%s%s qos=1: %s\n",
+                serialStyle(SerialStyle::Topic),
                 kResetCredentialsTopic,
-                resetSubscribed ? "ok" : "FAILED");
+                serialReset(),
+                serialOkFailed(resetSubscribed));
   mqttResetControlsConfigured = resetSubscribed;
-  publishBootPhase(mqttResetControlsConfigured ? "reset_controls_done" : "reset_controls_failed");
+  recordSetupPhase(mqttResetControlsConfigured ? "reset_controls_done" : "reset_controls_failed");
   return mqttResetControlsConfigured;
 }
 
@@ -415,18 +483,29 @@ bool publishFloat(const char* suffix, float value) {
   char payload[24];
   dtostrf(value, 0, 8, payload);
   const bool ok = mqttClientInstance.publish(fullTopic.c_str(), payload, true);
-  Serial.printf("MQTT publish %s = %s retained: %s\n", fullTopic.c_str(), payload, ok ? "ok" : "FAILED");
+  Serial.printf("MQTT publish %s%s%s = %s%s%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
+                fullTopic.c_str(),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
+                payload,
+                serialReset(),
+                serialOkFailed(ok));
   return ok;
 }
 
 bool publishText(const char* suffix, const char* value, bool retained) {
   const String fullTopic = topic(suffix);
   const bool ok = mqttClientInstance.publish(fullTopic.c_str(), value, retained);
-  Serial.printf("MQTT publish %s = %s retained=%s: %s\n",
+  Serial.printf("MQTT publish %s%s%s = %s%s%s retained=%s: %s\n",
+                serialStyle(SerialStyle::Topic),
                 fullTopic.c_str(),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 value,
-                retained ? "true" : "false",
-                ok ? "ok" : "FAILED");
+                serialReset(),
+                serialTrueFalse(retained),
+                serialOkFailed(ok));
   return ok;
 }
 
@@ -445,18 +524,28 @@ bool publishDiscoveryPayload(const char* component, const char* objectId, const 
 
   const size_t payloadLength = strlen(payload);
   const size_t packetBytes = kMqttMaxHeaderBytes + 2 + strlen(discoveryTopic) + payloadLength;
-  Serial.printf("HA discovery payload %s: payload=%u bytes, packet_estimate=%u/%u bytes\n",
+  Serial.printf("HA discovery payload %s%s%s: payload=%s%u%s bytes, packet_estimate=%s%u/%u%s bytes\n",
+                serialStyle(SerialStyle::Topic),
                 discoveryTopic,
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 static_cast<unsigned int>(payloadLength),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
                 static_cast<unsigned int>(packetBytes),
-                static_cast<unsigned int>(kMqttBufferSize));
+                static_cast<unsigned int>(kMqttBufferSize),
+                serialReset());
   if (!mqttPacketFits(discoveryTopic, payloadLength, kMqttBufferSize, kMqttMaxHeaderBytes)) {
     Serial.printf("HA discovery skipped %s: MQTT packet estimate exceeds buffer\n", discoveryTopic);
     return false;
   }
 
   const bool ok = mqttClientInstance.publish(discoveryTopic, payload, true);
-  Serial.printf("HA discovery publish %s retained: %s\n", discoveryTopic, ok ? "ok" : "FAILED");
+  Serial.printf("HA discovery publish %s%s%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
+                discoveryTopic,
+                serialReset(),
+                serialOkFailed(ok));
   return ok;
 }
 
@@ -514,7 +603,7 @@ void waitForRetainedStayAwakeCommand() {
     Serial.println("No retained stay-awake command received before timeout; defaulting to one publish then sleep");
     logBootPhase("stay_awake_wait_timeout");
   } else {
-    Serial.printf("Retained stay-awake command applied: %s\n", stayAwakeRequested ? "true" : "false");
+      Serial.printf("Retained stay-awake command applied: %s\n", serialTrueFalse(stayAwakeRequested));
     Serial.printf("Stay-awake retained value means this boot will %s\n",
                   stayAwakeRequested ? "remain awake" : "return to deep sleep after publishing");
     logBootPhase(stayAwakeRequested ? "stay_awake_true" : "stay_awake_false");

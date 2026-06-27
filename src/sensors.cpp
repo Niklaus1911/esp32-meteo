@@ -35,7 +35,12 @@ bool i2cAddressPresent(uint8_t address) {
 }
 
 void logExpectedDevice(uint8_t address, const char* name, bool present) {
-  Serial.printf("I2C 0x%02X %-18s %s\n", address, name, present ? "present" : "MISSING");
+  Serial.printf("I2C %s0x%02X%s %-18s %s\n",
+                serialStyle(SerialStyle::Topic),
+                address,
+                serialReset(),
+                name,
+                serialPresentMissing(present));
 }
 
 void configureBmp390AfterInit() {
@@ -45,9 +50,13 @@ void configureBmp390AfterInit() {
   Serial.println("BMP390/BMP3xx initialized with pressure 32x, temperature 16x, IIR 16x");
   // The BMP3XX first sample after startup may be inaccurate; discard it before publishing.
   if (bmp.performReading()) {
-    Serial.printf("BMP390/BMP3xx warm-up discard: temperature %.2f C, pressure %.2f hPa\n",
+    Serial.printf("BMP390/BMP3xx warm-up discard: temperature %s%.2f C%s, pressure %s%.2f hPa%s\n",
+                  serialStyle(SerialStyle::Value),
                   bmp.temperature,
-                  bmp.pressure / 100.0f);
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
+                  bmp.pressure / 100.0f,
+                  serialReset());
   } else {
     Serial.println("BMP390/BMP3xx warm-up discard read failed");
   }
@@ -63,8 +72,12 @@ void initializeBmp390() {
   for (uint8_t attempt = 1; attempt <= kBmp390InitAttempts; ++attempt) {
     devices.bmp390Present = i2cAddressPresent(kBmp390Address);
     if (!devices.bmp390Present) {
-      Serial.printf("BMP390/BMP3xx not present at 0x%02X on init attempt %u/%u\n",
+      Serial.printf("%sBMP390/BMP3xx not present%s at %s0x%02X%s on init attempt %u/%u\n",
+                    serialStyle(SerialStyle::Warning),
+                    serialReset(),
+                    serialStyle(SerialStyle::Topic),
                     kBmp390Address,
+                    serialReset(),
                     attempt,
                     kBmp390InitAttempts);
     } else {
@@ -78,7 +91,11 @@ void initializeBmp390() {
         configureBmp390AfterInit();
         return;
       }
-      Serial.printf("BMP390/BMP3xx initialization failed on attempt %u/%u\n", attempt, kBmp390InitAttempts);
+      Serial.printf("%sBMP390/BMP3xx initialization failed%s on attempt %u/%u\n",
+                    serialStyle(SerialStyle::Error),
+                    serialReset(),
+                    attempt,
+                    kBmp390InitAttempts);
     }
 
     if (attempt < kBmp390InitAttempts) {
@@ -90,21 +107,35 @@ void initializeBmp390() {
 
   if (!devices.bmp390Present) {
     devices.bmp390Issue = "bmp3xx_missing";
-    Serial.printf("Skipping BMP390/BMP3xx init because 0x%02X is missing after retries\n", kBmp390Address);
+    Serial.printf("%sSkipping BMP390/BMP3xx init%s because %s0x%02X%s is missing after retries\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  kBmp390Address,
+                  serialReset());
   } else {
     devices.bmp390Issue = "bmp3xx_init_failed";
-    Serial.println("BMP390/BMP3xx initialization failed after retries");
+    Serial.printf("%sBMP390/BMP3xx initialization failed after retries%s\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
   }
 }
 
 void logIna226ReadDiagnostics(INA226_WE& monitor, const char* name) {
   monitor.readAndClearFlags();
   if (monitor.overflow) {
-    Serial.printf("%s INA226 diagnostic: math overflow flag was set\n", name);
+    Serial.printf("%s%s INA226 diagnostic: math overflow flag was set%s\n",
+                  serialStyle(SerialStyle::Warning),
+                  name,
+                  serialReset());
   }
   const uint8_t i2cError = monitor.getI2cErrorCode();
   if (i2cError != 0) {
-    Serial.printf("%s INA226 diagnostic: I2C error code %u while reading flags\n", name, i2cError);
+    Serial.printf("%s%s INA226 diagnostic: I2C error code %u while reading flags%s\n",
+                  serialStyle(SerialStyle::Warning),
+                  name,
+                  i2cError,
+                  serialReset());
   }
 }
 
@@ -127,8 +158,10 @@ bool readIna226Measurements(INA226_WE& monitor,
   const uint8_t powerI2cError = monitor.getI2cErrorCode();
 
   if (voltageI2cError != 0 || currentI2cError != 0 || powerI2cError != 0) {
-    Serial.printf("%s INA226 read skipped: I2C error codes voltage=%u current=%u power=%u\n",
+    Serial.printf("%s%s INA226 read skipped%s: I2C error codes voltage=%u current=%u power=%u\n",
+                  serialStyle(SerialStyle::Warning),
                   name,
+                  serialReset(),
                   voltageI2cError,
                   currentI2cError,
                   powerI2cError);
@@ -136,7 +169,10 @@ bool readIna226Measurements(INA226_WE& monitor,
   }
 
   if (!valuesAreFinite(measuredBusVoltageV, measuredCurrentMa, measuredPowerW)) {
-    Serial.printf("%s INA226 read skipped: invalid measurement value\n", name);
+    Serial.printf("%s%s INA226 read skipped: invalid measurement value%s\n",
+                  serialStyle(SerialStyle::Warning),
+                  name,
+                  serialReset());
     return false;
   }
 
@@ -154,7 +190,13 @@ const DeviceState& deviceState() {
 
 void scanI2cBus() {
   logPhase("I2C scan");
-  Serial.printf("I2C pins: SDA GPIO%u, SCL GPIO%u\n", kI2cSdaPin, kI2cSclPin);
+  Serial.printf("I2C pins: SDA %sGPIO%u%s, SCL %sGPIO%u%s\n",
+                serialStyle(SerialStyle::Topic),
+                kI2cSdaPin,
+                serialReset(),
+                serialStyle(SerialStyle::Topic),
+                kI2cSclPin,
+                serialReset());
   Serial.println("Expected devices:");
   Serial.printf("  0x%02X INA226 solar monitor\n", kSolarInaAddress);
   Serial.printf("  0x%02X INA226 battery monitor\n", kBatteryInaAddress);
@@ -165,12 +207,12 @@ void scanI2cBus() {
   uint8_t found = 0;
   for (uint8_t address = 1; address < 127; ++address) {
     if (i2cAddressPresent(address)) {
-      Serial.printf("  found 0x%02X\n", address);
+    Serial.printf("  found %s0x%02X%s\n", serialStyle(SerialStyle::Topic), address, serialReset());
       ++found;
     }
   }
   if (found == 0) {
-    Serial.println("  no I2C devices detected");
+    Serial.printf("  %sno I2C devices detected%s\n", serialStyle(SerialStyle::Warning), serialReset());
   }
 
   devices.solarInaPresent = i2cAddressPresent(kSolarInaAddress);
@@ -184,10 +226,10 @@ void scanI2cBus() {
   logExpectedDevice(kBmp390Address, "BMP390/BMP3xx", devices.bmp390Present);
   Serial.printf(
       "I2C expected-device summary: solar=%s battery=%s sht4x=%s bmp3xx=%s\n",
-      yesNo(devices.solarInaPresent),
-      yesNo(devices.batteryInaPresent),
-      yesNo(devices.sht41Present),
-      yesNo(devices.bmp390Present));
+      serialYesNo(devices.solarInaPresent),
+      serialYesNo(devices.batteryInaPresent),
+      serialYesNo(devices.sht41Present),
+      serialYesNo(devices.bmp390Present));
 }
 
 void initializeSensors() {
@@ -201,14 +243,21 @@ void initializeSensors() {
       devices.sht41Issue = nullptr;
       sht4.setPrecision(SHT4X_HIGH_PRECISION);
       sht4.setHeater(SHT4X_NO_HEATER);
-      Serial.println("SHT41/SHT4x initialized with high precision and heater off");
+      Serial.printf("%sSHT41/SHT4x initialized%s with high precision and heater off\n",
+                    serialStyle(SerialStyle::Success),
+                    serialReset());
     } else {
       devices.sht41Issue = "sht4x_init_failed";
-      Serial.println("SHT41/SHT4x initialization failed");
+      Serial.printf("%sSHT41/SHT4x initialization failed%s\n", serialStyle(SerialStyle::Error), serialReset());
     }
   } else {
     devices.sht41Issue = "sht4x_missing";
-    Serial.printf("Skipping SHT41/SHT4x init because 0x%02X is missing\n", kSht41Address);
+    Serial.printf("%sSkipping SHT41/SHT4x init%s because %s0x%02X%s is missing\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  kSht41Address,
+                  serialReset());
   }
 
   if (devices.solarInaPresent) {
@@ -221,14 +270,19 @@ void initializeSensors() {
       devices.solarInaIssue = nullptr;
       solarIna.setResistorRange(kInaShuntOhms, kSolarMaxCurrentA);
       solarIna.waitUntilConversionCompleted();
-      Serial.println("Solar INA226 initialized");
+      Serial.printf("%sSolar INA226 initialized%s\n", serialStyle(SerialStyle::Success), serialReset());
     } else {
       devices.solarInaIssue = "solar_ina226_init_failed";
-      Serial.println("Solar INA226 initialization failed");
+      Serial.printf("%sSolar INA226 initialization failed%s\n", serialStyle(SerialStyle::Error), serialReset());
     }
   } else {
     devices.solarInaIssue = "solar_ina226_missing";
-    Serial.printf("Skipping solar INA226 init because 0x%02X is missing\n", kSolarInaAddress);
+    Serial.printf("%sSkipping solar INA226 init%s because %s0x%02X%s is missing\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  kSolarInaAddress,
+                  serialReset());
   }
 
   if (devices.batteryInaPresent) {
@@ -241,22 +295,27 @@ void initializeSensors() {
       devices.batteryInaIssue = nullptr;
       batteryIna.setResistorRange(kInaShuntOhms, kBatteryMaxCurrentA);
       batteryIna.waitUntilConversionCompleted();
-      Serial.println("Battery INA226 initialized");
+      Serial.printf("%sBattery INA226 initialized%s\n", serialStyle(SerialStyle::Success), serialReset());
     } else {
       devices.batteryInaIssue = "battery_ina226_init_failed";
-      Serial.println("Battery INA226 initialization failed");
+      Serial.printf("%sBattery INA226 initialization failed%s\n", serialStyle(SerialStyle::Error), serialReset());
     }
   } else {
     devices.batteryInaIssue = "battery_ina226_missing";
-    Serial.printf("Skipping battery INA226 init because 0x%02X is missing\n", kBatteryInaAddress);
+    Serial.printf("%sSkipping battery INA226 init%s because %s0x%02X%s is missing\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  kBatteryInaAddress,
+                  serialReset());
   }
 
   Serial.printf(
       "Sensor readiness summary: solar=%s battery=%s sht4x=%s bmp3xx=%s\n",
-      yesNo(devices.solarInaReady),
-      yesNo(devices.batteryInaReady),
-      yesNo(devices.sht41Ready),
-      yesNo(devices.bmp390Ready));
+      serialYesNo(devices.solarInaReady),
+      serialYesNo(devices.batteryInaReady),
+      serialYesNo(devices.sht41Ready),
+      serialYesNo(devices.bmp390Ready));
 
   Serial.printf("Waiting %lu ms for sensors to settle after initialization\n",
                 static_cast<unsigned long>(kSensorPostInitSettleDelayMs));
@@ -269,9 +328,13 @@ Bmp390Reading readBmp390Sensor() {
     if (bmp.performReading()) {
       reading.temperatureC = bmp.temperature;
       reading.absolutePressureHpa = bmp.pressure / 100.0f;
-      Serial.printf("BMP390/BMP3xx: temperature %.2f C, pressure %.2f hPa\n",
+      Serial.printf("BMP390/BMP3xx: temperature %s%.2f C%s, pressure %s%.2f hPa%s\n",
+                    serialStyle(SerialStyle::Value),
                     reading.temperatureC,
-                    reading.absolutePressureHpa);
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    reading.absolutePressureHpa,
+                    serialReset());
     } else {
       Serial.println("BMP390/BMP3xx read failed");
     }
@@ -290,9 +353,13 @@ Sht41Reading readSht41Sensor() {
     if (sht4.getEvent(&humidity, &temperature)) {
       reading.temperatureC = temperature.temperature;
       reading.humidityPercent = humidity.relative_humidity;
-      Serial.printf("SHT41/SHT4x: temperature %.2f C, humidity %.2f %%\n",
+      Serial.printf("SHT41/SHT4x: temperature %s%.2f C%s, humidity %s%.2f %%%s\n",
+                    serialStyle(SerialStyle::Value),
                     reading.temperatureC,
-                    reading.humidityPercent);
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    reading.humidityPercent,
+                    serialReset());
     } else {
       Serial.println("SHT41/SHT4x read failed");
     }
@@ -314,12 +381,20 @@ Ina226Reading readBatteryIna226() {
       reading.voltageV = busVoltageV;
       reading.currentMa = currentMa;
       reading.powerW = powerW;
-      Serial.printf("Battery INA226 (%s): voltage %.3f V, current %.2f mA, power %.3f W, level %.1f %%\n",
+      Serial.printf("Battery INA226 (%s): voltage %s%.3f V%s, current %s%.2f mA%s, power %s%.3f W%s, level %s%.1f %%%s\n",
                     batteryChemistryName(runtimeConfig().batteryChemistryId),
+                    serialStyle(SerialStyle::Value),
                     reading.voltageV,
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
                     reading.currentMa,
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
                     reading.powerW,
-                    batteryLevelPercent(reading.voltageV));
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    batteryLevelPercent(reading.voltageV),
+                    serialReset());
     }
   } else {
     Serial.println("Battery INA226 skipped: not ready");
@@ -339,10 +414,16 @@ Ina226Reading readSolarIna226() {
       reading.voltageV = busVoltageV;
       reading.currentMa = currentMa;
       reading.powerW = powerW;
-      Serial.printf("Solar INA226: voltage %.3f V, current %.2f mA, power %.3f W\n",
+      Serial.printf("Solar INA226: voltage %s%.3f V%s, current %s%.2f mA%s, power %s%.3f W%s\n",
+                    serialStyle(SerialStyle::Value),
                     reading.voltageV,
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
                     reading.currentMa,
-                    reading.powerW);
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    reading.powerW,
+                    serialReset());
     }
   } else {
     Serial.println("Solar INA226 skipped: not ready");

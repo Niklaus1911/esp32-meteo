@@ -147,7 +147,8 @@ bool mqttPacketFits(const char* topic, size_t payloadLength, size_t bufferSize, 
 
 bool shouldPublishRoutineDiscovery(bool deepSleepWake, bool stayAwakeRequested) {
   (void)deepSleepWake;
-  return stayAwakeRequested;
+  (void)stayAwakeRequested;
+  return true;
 }
 
 }  // namespace Esp32Meteo

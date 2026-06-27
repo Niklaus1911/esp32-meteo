@@ -89,7 +89,9 @@ void formatBatteryChemistrySelect(char* buffer, size_t bufferSize, uint8_t chemi
 
 bool runProvisioningPortal() {
   logPhase("Provisioning");
-  Serial.println("Starting WiFiManager captive portal for WiFi and runtime settings");
+  Serial.printf("%sStarting WiFiManager captive portal%s for WiFi and runtime settings\n",
+                serialStyle(SerialStyle::Highlight),
+                serialReset());
   Serial.println("MQTT and OTA passwords are accepted by the portal but will not be printed");
 
   const RuntimeConfig& existing = runtimeConfig();
@@ -174,17 +176,24 @@ bool runProvisioningPortal() {
 
   char apName[40];
   formatSetupApName(apName, sizeof(apName));
-  Serial.printf("Provisioning AP: %s, portal has no timeout\n", apName);
+  Serial.printf("Provisioning AP: %s%s%s, portal has no timeout\n",
+                serialStyle(SerialStyle::Topic),
+                apName,
+                serialReset());
 
   if (!manager.startConfigPortal(apName)) {
-    Serial.println("Provisioning portal exited without a saved WiFi connection");
+    Serial.printf("%sProvisioning portal exited without a saved WiFi connection%s\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     WiFi.disconnect(false);
     return false;
   }
 
   uint32_t parsedMqttPort = 0;
   if (!parsePortValue(mqttPortParam.getValue(), parsedMqttPort)) {
-    Serial.println("Provisioning rejected: MQTT port must be between 1 and 65535");
+    Serial.printf("%sProvisioning rejected%s: MQTT port must be between 1 and 65535\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     WiFi.disconnect(false);
     return false;
   }
@@ -206,14 +215,19 @@ bool runProvisioningPortal() {
                              configuredStaticIp,
                              configuredGateway,
                              configuredSubnet)) {
-    Serial.println("Provisioning rejected: one or more values exceed firmware limits");
+    Serial.printf("%sProvisioning rejected%s: one or more values exceed firmware limits\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     WiFi.disconnect(false);
     return false;
   }
 
   const RuntimeConfigValidation validation = validateRuntimeConfig(configured);
   if (!validation.valid) {
-    Serial.printf("Provisioning rejected: %s\n", validation.reason);
+    Serial.printf("%sProvisioning rejected%s: %s\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset(),
+                  validation.reason);
     WiFi.disconnect(false);
     return false;
   }
@@ -223,7 +237,9 @@ bool runProvisioningPortal() {
     return false;
   }
 
-  Serial.println("Provisioning saved; rebooting so normal boot uses stored runtime settings");
+  Serial.printf("%sProvisioning saved%s; rebooting so normal boot uses stored runtime settings\n",
+                serialStyle(SerialStyle::Success),
+                serialReset());
   Serial.flush();
   ESP.restart();
   return false;

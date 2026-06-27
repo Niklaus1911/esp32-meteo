@@ -19,8 +19,12 @@ namespace {
 void markTelemetryPublishCompleted() {
   telemetryPublishCompleted = true;
   telemetryPublishCompletedMs = millis();
-  Serial.printf("Telemetry publish completed at %lu ms; post-telemetry awake window starts now\n",
-                static_cast<unsigned long>(telemetryPublishCompletedMs));
+  Serial.printf("%sTelemetry publish completed%s at %s%lu ms%s; post-telemetry awake window starts now\n",
+                serialStyle(SerialStyle::Success),
+                serialReset(),
+                serialStyle(SerialStyle::Value),
+                static_cast<unsigned long>(telemetryPublishCompletedMs),
+                serialReset());
 }
 
 bool publishDiagnostics() {
@@ -47,7 +51,9 @@ bool publishDiagnostics() {
                             {devices.bmp390Ready, devices.bmp390Issue})) {
     allOk &= publishText("/diagnostic/sensor_readiness", sensorReadiness);
   } else {
-    Serial.println("Skipping sensor readiness diagnostic: formatted payload too long");
+    Serial.printf("%sSkipping sensor readiness diagnostic%s: formatted payload too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     allOk = false;
   }
 
@@ -63,12 +69,21 @@ bool publishDeviceStatus() {
                           devices.batteryInaIssue,
                           devices.sht41Issue,
                           devices.bmp390Issue)) {
-    Serial.println("MQTT status publish skipped: status payload too long");
+    Serial.printf("%sMQTT status publish skipped%s: status payload too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     return false;
   }
 
   const bool ok = mqttClient().publish(kStatusTopic, status, true);
-  Serial.printf("MQTT publish %s = %s retained: %s\n", kStatusTopic, status, ok ? "ok" : "FAILED");
+  Serial.printf("MQTT publish %s%s%s = %s%s%s retained: %s\n",
+                serialStyle(SerialStyle::Topic),
+                kStatusTopic,
+                serialReset(),
+                serialStyle(ok ? SerialStyle::Value : SerialStyle::Warning),
+                status,
+                serialReset(),
+                serialOkFailed(ok));
   return ok;
 }
 
@@ -140,7 +155,7 @@ bool publishReadings() {
   publishBootPhase(allOk ? "telemetry_done" : "telemetry_failed");
   flushMqtt(kTelemetryFlushMs);
   markTelemetryPublishCompleted();
-  Serial.printf("MQTT publish cycle result: %s\n", allOk ? "complete" : "FAILED");
+  Serial.printf("MQTT publish cycle result: %s\n", serialCompleteFailed(allOk));
   return allOk;
 }
 

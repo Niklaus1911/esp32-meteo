@@ -7,6 +7,7 @@
 #include "local_button_logic.h"
 #include "provisioning_logic.h"
 #include "runtime_config.h"
+#include "serial_style.h"
 
 using namespace Esp32Meteo;
 
@@ -77,10 +78,28 @@ void testMqttPacketSizing() {
 }
 
 void testRoutineDiscoveryPolicy() {
-  assert(!shouldPublishRoutineDiscovery(false, false));
+  assert(shouldPublishRoutineDiscovery(false, false));
   assert(shouldPublishRoutineDiscovery(false, true));
-  assert(!shouldPublishRoutineDiscovery(true, false));
+  assert(shouldPublishRoutineDiscovery(true, false));
   assert(shouldPublishRoutineDiscovery(true, true));
+}
+
+void testSerialStyles() {
+  assert(strcmp(serialStyleCode(SerialStyle::Success, true), "\033[32m") == 0);
+  assert(strcmp(serialStyleCode(SerialStyle::Warning, true), "\033[33m") == 0);
+  assert(strcmp(serialStyleCode(SerialStyle::Error, true), "\033[31m") == 0);
+  assert(strcmp(serialStyleCode(SerialStyle::Success, false), "") == 0);
+  assert(strcmp(serialResetCode(true), "\033[0m") == 0);
+  assert(strcmp(serialResetCode(false), "") == 0);
+  assert(serialResultStyle(true) == SerialStyle::Success);
+  assert(serialResultStyle(false) == SerialStyle::Error);
+  assert(serialReadyStyle(true) == SerialStyle::Success);
+  assert(serialReadyStyle(false) == SerialStyle::Error);
+  assert(strcmp(serialOkFailedText(true, false), "ok") == 0);
+  assert(strcmp(serialOkFailedText(false, false), "FAILED") == 0);
+  assert(strcmp(serialReadyMissingText(true, false), "ready") == 0);
+  assert(strcmp(serialReadyMissingText(false, false), "missing") == 0);
+  assert(strcmp(serialYesNoText(true, true), "\033[32myes\033[0m") == 0);
 }
 
 void testLongPressButtonLogic() {
@@ -285,6 +304,7 @@ int main() {
   testReadinessFormatting();
   testMqttPacketSizing();
   testRoutineDiscoveryPolicy();
+  testSerialStyles();
   testLongPressButtonLogic();
   testLongPressButtonShortPressDoesNotTrigger();
   testRuntimeConfigMqttPortValidation();

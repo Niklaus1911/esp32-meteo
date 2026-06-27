@@ -6,6 +6,8 @@
 #if defined(ARDUINO)
 #include <Arduino.h>
 #include <Preferences.h>
+
+#include "util.h"
 #endif
 
 namespace Esp32Meteo {
@@ -83,21 +85,36 @@ bool writePreferenceString(Preferences& preferences, const char* key, const char
 }
 
 void logRuntimeConfigSummary(const RuntimeConfig& config) {
-  Serial.printf("Runtime config: MQTT %s:%u, MQTT auth=%s, OTA password=%s\n",
+  Serial.printf("Runtime config: MQTT %s%s:%u%s, MQTT auth=%s%s%s, OTA password=%s%s%s\n",
+                serialStyle(SerialStyle::Value),
                 config.mqttHost,
                 config.mqttPort,
+                serialReset(),
+                serialStyle(config.mqttUsername[0] || config.mqttPassword[0] ? SerialStyle::Success
+                                                                              : SerialStyle::Warning),
                 config.mqttUsername[0] || config.mqttPassword[0] ? "configured" : "anonymous",
-                config.otaPassword[0] ? "configured" : "missing");
-  Serial.printf("Runtime config: battery chemistry %s (%s)\n",
+                serialReset(),
+                serialStyle(config.otaPassword[0] ? SerialStyle::Success : SerialStyle::Error),
+                config.otaPassword[0] ? "configured" : "missing",
+                serialReset());
+  Serial.printf("Runtime config: battery chemistry %s%s%s (%s)\n",
+                serialStyle(SerialStyle::Value),
                 batteryChemistryName(config.batteryChemistryId),
+                serialReset(),
                 batteryChemistryKey(config.batteryChemistryId));
   if (config.hasStaticIp) {
-    Serial.printf("Runtime config: static IP %s, gateway %s, subnet %s\n",
+    Serial.printf("Runtime config: static IP %s%s%s, gateway %s%s%s, subnet %s%s%s\n",
+                  serialStyle(SerialStyle::Value),
                   config.staticIp,
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
                   config.gateway,
-                  config.subnet);
+                  serialReset(),
+                  serialStyle(SerialStyle::Value),
+                  config.subnet,
+                  serialReset());
   } else {
-    Serial.println("Runtime config: static IP disabled; DHCP will be used");
+    Serial.printf("Runtime config: static IP %s; DHCP will be used\n", serialEnabledDisabled(false));
   }
 }
 #endif
@@ -291,7 +308,9 @@ const RuntimeConfig& runtimeConfig() {
 bool loadRuntimeConfig() {
   Preferences preferences;
   if (!preferences.begin(kRuntimeConfigNamespace, true)) {
-    Serial.println("Runtime config load failed: Preferences namespace unavailable");
+    Serial.printf("%sRuntime config load failed%s: Preferences namespace unavailable\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     currentConfig = RuntimeConfig{};
     return false;
   }
@@ -314,17 +333,22 @@ bool loadRuntimeConfig() {
   currentConfig = loaded;
 
   if (!stringsOk) {
-    Serial.println("Runtime config load failed: stored value exceeds firmware limit");
+    Serial.printf("%sRuntime config load failed%s: stored value exceeds firmware limit\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     return false;
   }
 
   const RuntimeConfigValidation validation = validateRuntimeConfig(currentConfig);
   if (!validation.valid) {
-    Serial.printf("Runtime config invalid or missing: %s\n", validation.reason);
+    Serial.printf("%sRuntime config invalid or missing%s: %s\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  validation.reason);
     return false;
   }
 
-  Serial.println("Runtime config loaded from NVS");
+  Serial.printf("%sRuntime config loaded from NVS%s\n", serialStyle(SerialStyle::Success), serialReset());
   logRuntimeConfigSummary(currentConfig);
   return true;
 }
@@ -334,13 +358,18 @@ bool saveRuntimeConfig(const RuntimeConfig& config) {
 
   const RuntimeConfigValidation validation = validateRuntimeConfig(normalized);
   if (!validation.valid) {
-    Serial.printf("Runtime config save rejected: %s\n", validation.reason);
+    Serial.printf("%sRuntime config save rejected%s: %s\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  validation.reason);
     return false;
   }
 
   Preferences preferences;
   if (!preferences.begin(kRuntimeConfigNamespace, false)) {
-    Serial.println("Runtime config save failed: Preferences namespace unavailable");
+    Serial.printf("%sRuntime config save failed%s: Preferences namespace unavailable\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     return false;
   }
 
@@ -358,12 +387,12 @@ bool saveRuntimeConfig(const RuntimeConfig& config) {
   preferences.end();
 
   if (!ok) {
-    Serial.println("Runtime config save failed");
+    Serial.printf("%sRuntime config save failed%s\n", serialStyle(SerialStyle::Error), serialReset());
     return false;
   }
 
   currentConfig = normalized;
-  Serial.println("Runtime config saved to NVS");
+  Serial.printf("%sRuntime config saved to NVS%s\n", serialStyle(SerialStyle::Success), serialReset());
   logRuntimeConfigSummary(currentConfig);
   return true;
 }
@@ -371,7 +400,9 @@ bool saveRuntimeConfig(const RuntimeConfig& config) {
 bool clearRuntimeConfig() {
   Preferences preferences;
   if (!preferences.begin(kRuntimeConfigNamespace, false)) {
-    Serial.println("Runtime config clear failed: Preferences namespace unavailable");
+    Serial.printf("%sRuntime config clear failed%s: Preferences namespace unavailable\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
     return false;
   }
 
@@ -379,7 +410,7 @@ bool clearRuntimeConfig() {
   preferences.end();
   currentConfig = RuntimeConfig{};
 
-  Serial.printf("Runtime config clear from NVS: %s\n", ok ? "ok" : "FAILED");
+  Serial.printf("Runtime config clear from NVS: %s\n", serialOkFailed(ok));
   return ok;
 }
 #endif

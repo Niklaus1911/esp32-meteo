@@ -114,25 +114,44 @@ void appSetup() {
   waitWithLocalButton(200);
 
   Serial.println();
-  Serial.printf("%s boot\n", kFirmwareName);
+  Serial.printf("%s%s boot%s\n", serialStyle(SerialStyle::Phase), kFirmwareName, serialReset());
   Serial.printf("CPU frequency requested: %lu MHz, active: %u MHz\n",
                 static_cast<unsigned long>(kCpuFrequencyMhz),
                 getCpuFrequencyMhz());
-  Serial.printf("Reset reason: %s\n", resetReasonName(resetReason));
-  Serial.printf("Wakeup cause: %s\n", wakeupCauseName(wakeupCause));
+  Serial.printf("Reset reason: %s%s%s\n",
+                serialStyle(resetReason == ESP_RST_BROWNOUT || resetReason == ESP_RST_PANIC ? SerialStyle::Error
+                                                                                             : SerialStyle::Value),
+                resetReasonName(resetReason),
+                serialReset());
+  Serial.printf("Wakeup cause: %s%s%s\n",
+                serialStyle(SerialStyle::Value),
+                wakeupCauseName(wakeupCause),
+                serialReset());
   Serial.printf("RTC counters: boots=%lu sleep_entries=%lu\n",
                 static_cast<unsigned long>(rtcBootCount),
                 static_cast<unsigned long>(rtcSleepEntryCount));
-  Serial.printf("RTC counter reset policy: %s\n", clearRtcCounters ? "cleared after power-on" : "preserved");
-  Serial.printf("MQTT topic prefix: %s\n", kTopicPrefix);
+  Serial.printf("RTC counter reset policy: %s%s%s\n",
+                serialStyle(SerialStyle::Value),
+                clearRtcCounters ? "cleared after power-on" : "preserved",
+                serialReset());
+  Serial.printf("MQTT topic prefix: %s%s%s\n", serialStyle(SerialStyle::Topic), kTopicPrefix, serialReset());
   Serial.printf("Stay-awake publish interval: %lu ms\n", static_cast<unsigned long>(kStayAwakePublishIntervalMs));
   Serial.printf("Default deep sleep: %llu seconds\n", kDeepSleepSeconds);
-  Serial.printf("Local force stay-awake flag: %s\n", kForceStayAwakeForTesting ? "enabled" : "disabled");
-  Serial.println("Safety: I2C pullups must be tied to 3.3 V only.");
-  Serial.println("Safety: charger chemistry, charge voltage, charge current, and protection must match the installed cell.");
-  Serial.println("Safety: Li-ion charger output above about 4.25 V is unsafe/untrusted.");
-  Serial.println("Safety: do not power the ESP32 3.3 V rail directly from LiFePO4; use a low-Iq regulator or buck-boost.");
-  Serial.println("Safety: solar panel rating, TP5000 variant, charge current, and ESP32 regulator behavior are not assumed.");
+  Serial.printf("Serial ANSI colors: %s\n", serialEnabledDisabled(kSerialAnsiColors));
+  Serial.printf("Local force stay-awake flag: %s\n", serialEnabledDisabled(kForceStayAwakeForTesting));
+  Serial.printf("%sSafety%s: I2C pullups must be tied to 3.3 V only.\n", serialStyle(SerialStyle::Warning), serialReset());
+  Serial.printf("%sSafety%s: charger chemistry, charge voltage, charge current, and protection must match the installed cell.\n",
+                serialStyle(SerialStyle::Warning),
+                serialReset());
+  Serial.printf("%sSafety%s: Li-ion charger output above about 4.25 V is unsafe/untrusted.\n",
+                serialStyle(SerialStyle::Warning),
+                serialReset());
+  Serial.printf("%sSafety%s: do not power the ESP32 3.3 V rail directly from LiFePO4; use a low-Iq regulator or buck-boost.\n",
+                serialStyle(SerialStyle::Warning),
+                serialReset());
+  Serial.printf("%sSafety%s: solar panel rating, TP5000 variant, charge current, and ESP32 regulator behavior are not assumed.\n",
+                serialStyle(SerialStyle::Warning),
+                serialReset());
 
   const bool deepSleepWake = isDeepSleepWake(resetReason, wakeupCause);
   if (deepSleepWake) {
@@ -143,8 +162,10 @@ void appSetup() {
     sleepForDefaultInterval("runtime provisioning incomplete");
   }
 
-  Serial.printf("Battery chemistry: %s (%s)\n",
+  Serial.printf("Battery chemistry: %s%s%s (%s)\n",
+                serialStyle(SerialStyle::Value),
                 batteryChemistryName(runtimeConfig().batteryChemistryId),
+                serialReset(),
                 batteryChemistryKey(runtimeConfig().batteryChemistryId));
 
   Wire.begin(kI2cSdaPin, kI2cSclPin);
@@ -170,33 +191,34 @@ void appSetup() {
   const bool initialTelemetryOk = publishReadingsWithRetry("initial boot/wake publish");
   lastPublishMs = millis();
 
-  if (initialTelemetryOk && shouldPublishRoutineDiscovery(deepSleepWake, stayAwakeRequested)) {
-    configureMqttResetControls();
-    publishHomeAssistantDiscovery();
-  } else if (initialTelemetryOk) {
-    Serial.println("Skipping routine Home Assistant discovery because this wake is sleep-bound");
-    publishBootPhase("ha_discovery_skipped_sleep_bound");
-  } else {
-    Serial.println("Skipping post-telemetry MQTT setup because telemetry did not complete cleanly");
-    publishBootPhase("post_telemetry_setup_skipped");
+  if (!initialTelemetryOk) {
+    Serial.printf("%sInitial telemetry did not complete cleanly after retry%s\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
   }
 
   if (!stayAwakeRequested) {
-    Serial.println("Stay-awake mode is disabled; device will sleep after first publish");
+    Serial.printf("Stay-awake mode is %s; device will sleep after first publish\n",
+                  serialEnabledDisabled(false));
     sleepForDefaultInterval("stay_awake disabled or absent");
   }
 
-  Serial.printf("Stay-awake mode enabled; publishing every %lu ms\n",
-                static_cast<unsigned long>(kStayAwakePublishIntervalMs));
+  Serial.printf("Stay-awake mode %s; publishing every %s%lu ms%s\n",
+                serialEnabledDisabled(true),
+                serialStyle(SerialStyle::Value),
+                static_cast<unsigned long>(kStayAwakePublishIntervalMs),
+                serialReset());
 }
 
 void appLoop() {
   serviceLocalButton();
 
   if (WiFi.status() != WL_CONNECTED || !mqttClient().connected()) {
-    Serial.printf("Connection lost while awake: wifi_status=%d mqtt_connected=%s\n",
+    Serial.printf("%sConnection lost while awake%s: wifi_status=%d mqtt_connected=%s\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset(),
                   WiFi.status(),
-                  yesNo(mqttClient().connected()));
+                  serialYesNo(mqttClient().connected()));
     sleepForDefaultInterval("connection lost");
   }
 

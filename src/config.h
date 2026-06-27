@@ -54,9 +54,14 @@
 #define ESP32_METEO_HA_MODEL ESP32_METEO_DEFAULT_HA_MODEL
 #endif
 
+#ifndef ESP32_METEO_SERIAL_ANSI_COLORS
+#define ESP32_METEO_SERIAL_ANSI_COLORS 1
+#endif
+
 namespace Esp32Meteo {
 
 constexpr uint32_t kSerialBaud = 115200;
+constexpr bool kSerialAnsiColors = ESP32_METEO_SERIAL_ANSI_COLORS != 0;
 constexpr uint8_t kBootButtonPin = static_cast<uint8_t>(ESP32_METEO_BOOT_BUTTON_PIN);
 constexpr uint8_t kI2cSdaPin = static_cast<uint8_t>(ESP32_METEO_I2C_SDA_PIN);
 constexpr uint8_t kI2cSclPin = static_cast<uint8_t>(ESP32_METEO_I2C_SCL_PIN);

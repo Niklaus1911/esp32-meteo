@@ -8,11 +8,55 @@ namespace Esp32Meteo {
 
 void logPhase(const char* phase) {
   Serial.println();
-  Serial.printf("== %s ==\n", phase);
+  Serial.printf("%s== %s ==%s\n", serialStyle(SerialStyle::Phase), phase, serialReset());
 }
 
 const char* yesNo(bool value) {
   return value ? "yes" : "no";
+}
+
+const char* serialStyle(SerialStyle style) {
+  return serialStyleCode(style, kSerialAnsiColors);
+}
+
+const char* serialReset() {
+  return serialResetCode(kSerialAnsiColors);
+}
+
+const char* serialResult(bool ok) {
+  return serialStyle(serialResultStyle(ok));
+}
+
+const char* serialReady(bool ready) {
+  return serialStyle(serialReadyStyle(ready));
+}
+
+const char* serialOkFailed(bool ok) {
+  return serialOkFailedText(ok, kSerialAnsiColors);
+}
+
+const char* serialCompleteFailed(bool ok) {
+  return serialCompleteFailedText(ok, kSerialAnsiColors);
+}
+
+const char* serialYesNo(bool value) {
+  return serialYesNoText(value, kSerialAnsiColors);
+}
+
+const char* serialTrueFalse(bool value) {
+  return serialTrueFalseText(value, kSerialAnsiColors);
+}
+
+const char* serialEnabledDisabled(bool value) {
+  return serialEnabledDisabledText(value, kSerialAnsiColors);
+}
+
+const char* serialPresentMissing(bool present) {
+  return serialPresentMissingText(present, kSerialAnsiColors);
+}
+
+const char* serialReadyMissing(bool ready) {
+  return serialReadyMissingText(ready, kSerialAnsiColors);
 }
 
 bool formatInto(char* buffer, size_t bufferSize, const char* description, const char* format, ...) {

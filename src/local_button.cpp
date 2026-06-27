@@ -5,6 +5,7 @@
 #include "config.h"
 #include "local_button_logic.h"
 #include "mqtt_client.h"
+#include "util.h"
 
 namespace Esp32Meteo {
 
@@ -22,20 +23,30 @@ void handleBootButtonEvent(LongPressButtonEvent event) {
   switch (event) {
     case LongPressButtonEvent::Pressed:
       resetRequestedForCurrentPress = false;
-      Serial.printf("BOOT button pressed on GPIO%u; hold for %lu ms to reset credentials\n",
+      Serial.printf("BOOT button pressed on %sGPIO%u%s; hold for %s%lu ms%s to reset credentials\n",
+                    serialStyle(SerialStyle::Topic),
                     static_cast<unsigned int>(kBootButtonPin),
-                    static_cast<unsigned long>(kBootButtonHoldMs));
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    static_cast<unsigned long>(kBootButtonHoldMs),
+                    serialReset());
       break;
 
     case LongPressButtonEvent::Released:
-      Serial.println(resetRequestedForCurrentPress ? "BOOT button released after reset request"
-                                                   : "BOOT button released before reset hold completed");
+      Serial.printf("%sBOOT button released%s %s\n",
+                    serialStyle(resetRequestedForCurrentPress ? SerialStyle::Success : SerialStyle::Warning),
+                    serialReset(),
+                    resetRequestedForCurrentPress ? "after reset request" : "before reset hold completed");
       resetRequestedForCurrentPress = false;
       break;
 
     case LongPressButtonEvent::Triggered:
-      Serial.printf("BOOT button held for %lu ms; requesting credentials reset\n",
-                    static_cast<unsigned long>(kBootButtonHoldMs));
+      Serial.printf("%sBOOT button held%s for %s%lu ms%s; requesting credentials reset\n",
+                    serialStyle(SerialStyle::Warning),
+                    serialReset(),
+                    serialStyle(SerialStyle::Value),
+                    static_cast<unsigned long>(kBootButtonHoldMs),
+                    serialReset());
       resetRequestedForCurrentPress = requestCredentialsReset("boot_button");
       if (resetRequestedForCurrentPress) {
         serviceCredentialResetRequests();
@@ -57,9 +68,14 @@ void initializeLocalButton() {
                         millis(),
                         kBootButtonDebounceMs,
                         kBootButtonHoldMs);
-  Serial.printf("BOOT button credentials reset enabled on GPIO%u active-low, hold %lu ms\n",
+  Serial.printf("BOOT button credentials reset %s on %sGPIO%u%s active-low, hold %s%lu ms%s\n",
+                serialEnabledDisabled(true),
+                serialStyle(SerialStyle::Topic),
                 static_cast<unsigned int>(kBootButtonPin),
-                static_cast<unsigned long>(kBootButtonHoldMs));
+                serialReset(),
+                serialStyle(SerialStyle::Value),
+                static_cast<unsigned long>(kBootButtonHoldMs),
+                serialReset());
 }
 
 void serviceLocalButton() {

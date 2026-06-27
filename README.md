@@ -35,7 +35,7 @@ The firmware no longer embeds WiFi, MQTT, OTA, static IP, or battery chemistry s
 | Sleep cycle | 10 minute deep-sleep interval by default |
 | Sensors | BMP390/BMP3xx, SHT41/SHT4x, solar INA226, battery INA226 |
 | Telemetry | Retained MQTT states published by staggered sensor group; invalid or `NAN` readings are skipped |
-| Home Assistant | Retained MQTT discovery with stable unique IDs; routine discovery runs only while stay-awake is enabled |
+| Home Assistant | Retained MQTT discovery with stable unique IDs; discovery runs during MQTT setup before first telemetry |
 | Diagnostics | Reset reason, sensor readiness, WiFi signal, WiFi SSID, IP address, battery chemistry, lifecycle status, boot phase |
 | Recovery | Home Assistant button or 4-second BOOT-button hold for clearing saved credentials and reopening the setup portal |
 | OTA | ArduinoOTA while the device is awake |
@@ -105,9 +105,9 @@ MQTT connection order is intentional:
 2. Subscribe to retained `stay_awake`.
 3. Process the retained stay-awake command.
 4. Subscribe to `homeassistant/status`.
-5. Publish retained readings and diagnostics one sensor group at a time.
-6. Clear any stale retained `reset_credentials` command and subscribe to the reset command topic when post-telemetry setup is allowed.
-7. Publish retained Home Assistant discovery after telemetry while stay-awake is enabled.
+5. Clear any stale retained `reset_credentials` command and subscribe to the reset command topic.
+6. Publish retained Home Assistant discovery.
+7. Publish retained readings and diagnostics one sensor group at a time.
 8. Publish retained `status=sleeping` before deep sleep.
 
 Home Assistant also discovers a `Reset Credentials` button. Pressing it publishes the exact payload `reset` to `<prefix>/control/reset_credentials` while the ESP32 is awake and not updating OTA. The same reset can be requested locally by holding the board BOOT button for 4 seconds while the firmware is awake. The firmware then publishes retained `status=resetting_credentials` when MQTT is available, clears saved runtime app config, erases saved WiFi station credentials, and reboots. The next boot starts the same WiFiManager setup portal used on first flash. This is a local device reset only; retained Home Assistant discovery topics and retained sensor states on the MQTT broker are not deleted.
@@ -169,6 +169,22 @@ python -m platformio run -e esp32dev
 python -m platformio run -e esp32c3
 ```
 
+## Serial Logs
+
+Serial output uses ANSI colors by default to make phases, successful actions, warnings, errors, MQTT topics, and measured values easier to scan. The project enables PlatformIO raw monitor mode so ANSI escape sequences pass through to the terminal instead of being printed as visible `␛` characters.
+
+The equivalent manual monitor command is:
+
+```sh
+pio device monitor -b 115200 --raw
+```
+
+If your serial monitor prints escape sequences literally, disable colored logs with the build flag:
+
+```ini
+-DESP32_METEO_SERIAL_ANSI_COLORS=0
+```
+
 ## OTA
 
 OTA is available only while the node is awake. Use the retained Home Assistant `Stay Awake` switch before starting OTA, or upload during the normal wake window.
@@ -209,7 +225,7 @@ The check verifies:
 
 GitHub Actions runs the same project check on pushes and pull requests. CI builds do not require local secrets.
 
-Manual hardware validation still matters. Check serial logs and `<prefix>/diagnostic/boot_phase` for I2C scan results, sensor readiness, WiFi connection, MQTT connection, staggered retained publishes, Home Assistant discovery when expected, OTA state, and sleep state. Pre-telemetry phases are Serial-only so diagnostics cannot block first sensor publish. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
+Manual hardware validation still matters. Check serial logs and `<prefix>/diagnostic/boot_phase` for I2C scan results, sensor readiness, WiFi connection, MQTT connection, Home Assistant discovery, staggered retained publishes, OTA state, and sleep state. Pre-telemetry boot-phase diagnostics are Serial-only; retained Home Assistant discovery intentionally runs before first telemetry so new devices are discoverable. Confirm Home Assistant keeps retained sensor values while the ESP32 is in normal deep sleep.
 
 ## Troubleshooting
 

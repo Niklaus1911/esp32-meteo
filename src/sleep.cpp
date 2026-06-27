@@ -17,14 +17,20 @@ void releaseI2cPinsBeforeSleep() {
   Wire.end();
   pinMode(kI2cSdaPin, INPUT);
   pinMode(kI2cSclPin, INPUT);
-  Serial.printf("I2C stopped and pins released before deep sleep: SDA GPIO%u, SCL GPIO%u\n",
+  Serial.printf("I2C stopped and pins released before deep sleep: SDA %sGPIO%u%s, SCL %sGPIO%u%s\n",
+                serialStyle(SerialStyle::Topic),
                 static_cast<unsigned int>(kI2cSdaPin),
-                static_cast<unsigned int>(kI2cSclPin));
+                serialReset(),
+                serialStyle(SerialStyle::Topic),
+                static_cast<unsigned int>(kI2cSclPin),
+                serialReset());
 }
 
 void waitForPostTelemetryAwakeWindow() {
   if (!telemetryPublishCompleted) {
-    Serial.println("Telemetry publish was not completed; skipping post-telemetry awake wait");
+    Serial.printf("%sTelemetry publish was not completed%s; skipping post-telemetry awake wait\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     return;
   }
 
@@ -49,13 +55,21 @@ void waitForPostTelemetryAwakeWindow() {
 void sleepForDefaultInterval(const char* reason) {
   logPhase("Deep sleep");
   while (otaInProgress) {
-    Serial.println("OTA update in progress; delaying deep sleep");
+    Serial.printf("%sOTA update in progress%s; delaying deep sleep\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     serviceMqttAndOta();
     delay(100);
   }
 
   publishBootPhase("sleep_prepare");
-  Serial.printf("Preparing deep sleep for %llu seconds: %s\n", kDeepSleepSeconds, reason);
+  Serial.printf("Preparing deep sleep for %s%llu seconds%s: %s%s%s\n",
+                serialStyle(SerialStyle::Value),
+                kDeepSleepSeconds,
+                serialReset(),
+                serialStyle(SerialStyle::Warning),
+                reason,
+                serialReset());
   waitForPostTelemetryAwakeWindow();
 
   if (mqttClient().connected()) {
@@ -64,19 +78,24 @@ void sleepForDefaultInterval(const char* reason) {
       waitWithMqttAndOta(kPostSleepStatusGraceMs, "Post-sleep-status MQTT grace period");
     }
     mqttClient().disconnect();
-    Serial.println("MQTT disconnected");
+    Serial.printf("%sMQTT disconnected%s\n", serialStyle(SerialStyle::Muted), serialReset());
   } else {
-    Serial.println("MQTT not connected; skipping sleeping status publish");
+    Serial.printf("%sMQTT not connected%s; skipping sleeping status publish\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
   }
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  Serial.println("WiFi disconnected and radio turned off");
+  Serial.printf("%sWiFi disconnected%s and radio turned off\n", serialStyle(SerialStyle::Muted), serialReset());
   releaseI2cPinsBeforeSleep();
   ++rtcSleepEntryCount;
   Serial.printf("RTC sleep entry counter: %lu\n", static_cast<unsigned long>(rtcSleepEntryCount));
   esp_sleep_enable_timer_wakeup(kDeepSleepSeconds * 1000000ULL);
-  Serial.println("Deep-sleep timer configured");
-  Serial.printf("Entering deep sleep for %llu seconds now\n", kDeepSleepSeconds);
+  Serial.printf("%sDeep-sleep timer configured%s\n", serialStyle(SerialStyle::Success), serialReset());
+  Serial.printf("Entering deep sleep for %s%llu seconds%s now\n",
+                serialStyle(SerialStyle::Value),
+                kDeepSleepSeconds,
+                serialReset());
   Serial.flush();
   esp_deep_sleep_start();
 }

@@ -45,14 +45,22 @@ bool formatHaObjectId(char* buffer, size_t bufferSize, const char* suffix) {
 bool publishHaSensorDiscovery(const HaSensorDefinition& definition) {
   char objectId[96];
   if (!formatHaObjectId(objectId, sizeof(objectId), definition.objectSuffix)) {
-    Serial.printf("HA discovery skipped for %s: object id too long\n", definition.objectSuffix);
+    Serial.printf("%sHA discovery skipped%s for %s: object id too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  definition.objectSuffix);
     return false;
   }
 
   char stateTopic[128];
   if (definition.stateTopic && definition.stateTopic[0]) {
     if (!formatInto(stateTopic, sizeof(stateTopic), "HA sensor state topic", "%s", definition.stateTopic)) {
-      Serial.printf("HA discovery skipped for %s: state topic too long\n", objectId);
+      Serial.printf("%sHA discovery skipped%s for %s%s%s: state topic too long\n",
+                    serialStyle(SerialStyle::Warning),
+                    serialReset(),
+                    serialStyle(SerialStyle::Topic),
+                    objectId,
+                    serialReset());
       return false;
     }
   } else if (definition.stateTopicSuffix && definition.stateTopicSuffix[0]) {
@@ -62,11 +70,21 @@ bool publishHaSensorDiscovery(const HaSensorDefinition& definition) {
                     "%s%s",
                     kTopicPrefix,
                     definition.stateTopicSuffix)) {
-      Serial.printf("HA discovery skipped for %s: state topic too long\n", objectId);
+      Serial.printf("%sHA discovery skipped%s for %s%s%s: state topic too long\n",
+                    serialStyle(SerialStyle::Warning),
+                    serialReset(),
+                    serialStyle(SerialStyle::Topic),
+                    objectId,
+                    serialReset());
       return false;
     }
   } else {
-    Serial.printf("HA discovery skipped for %s: missing state topic\n", objectId);
+    Serial.printf("%sHA discovery skipped%s for %s%s%s: missing state topic\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  objectId,
+                  serialReset());
     return false;
   }
 
@@ -91,7 +109,12 @@ bool publishHaSensorDiscovery(const HaSensorDefinition& definition) {
                                "entity_category",
                                definition.entityCategory,
                                "HA sensor entity_category field")) {
-    Serial.printf("HA discovery skipped for %s: optional fields too long\n", objectId);
+    Serial.printf("%sHA discovery skipped%s for %s%s%s: optional fields too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  objectId,
+                  serialReset());
     return false;
   }
 
@@ -113,7 +136,12 @@ bool publishHaSensorDiscovery(const HaSensorDefinition& definition) {
                   kFirmwareName,
                   kFirmwareName,
                   kFirmwareName)) {
-    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
+    Serial.printf("%sHA discovery skipped%s for %s%s%s: payload too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  objectId,
+                  serialReset());
     return false;
   }
 
@@ -123,7 +151,9 @@ bool publishHaSensorDiscovery(const HaSensorDefinition& definition) {
 bool publishHaSwitchDiscovery() {
   char objectId[96];
   if (!formatHaObjectId(objectId, sizeof(objectId), "stay_awake")) {
-    Serial.println("HA discovery skipped for stay_awake: object id too long");
+    Serial.printf("%sHA discovery skipped%s for stay_awake: object id too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     return false;
   }
 
@@ -147,7 +177,12 @@ bool publishHaSwitchDiscovery() {
                   kFirmwareName,
                   kFirmwareName,
                   kFirmwareName)) {
-    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
+    Serial.printf("%sHA discovery skipped%s for %s%s%s: payload too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  objectId,
+                  serialReset());
     return false;
   }
 
@@ -157,7 +192,9 @@ bool publishHaSwitchDiscovery() {
 bool publishHaButtonDiscovery() {
   char objectId[96];
   if (!formatHaObjectId(objectId, sizeof(objectId), "reset_credentials")) {
-    Serial.println("HA discovery skipped for reset_credentials: object id too long");
+    Serial.printf("%sHA discovery skipped%s for reset_credentials: object id too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
     return false;
   }
 
@@ -179,7 +216,12 @@ bool publishHaButtonDiscovery() {
                   kFirmwareName,
                   kFirmwareName,
                   kFirmwareName)) {
-    Serial.printf("HA discovery skipped for %s: payload too long\n", objectId);
+    Serial.printf("%sHA discovery skipped%s for %s%s%s: payload too long\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset(),
+                  serialStyle(SerialStyle::Topic),
+                  objectId,
+                  serialReset());
     return false;
   }
 
@@ -213,12 +255,29 @@ bool haDiscoveryBudgetExceeded(uint32_t started, const char* nextItem) {
     return false;
   }
 
-  Serial.printf("HA discovery budget exceeded before %s after %lu/%lu ms\n",
+  Serial.printf("%sHA discovery budget exceeded%s before %s after %s%lu/%lu ms%s\n",
+                serialStyle(SerialStyle::Warning),
+                serialReset(),
                 nextItem,
+                serialStyle(SerialStyle::Value),
                 static_cast<unsigned long>(elapsedMs),
-                static_cast<unsigned long>(kHaDiscoveryBudgetMs));
-  publishBootPhase("ha_discovery_budget_exceeded");
+                static_cast<unsigned long>(kHaDiscoveryBudgetMs),
+                serialReset());
+  if (telemetryPublishCompleted) {
+    publishBootPhase("ha_discovery_budget_exceeded");
+  } else {
+    logBootPhase("ha_discovery_budget_exceeded");
+  }
   return true;
+}
+
+void recordHaDiscoveryPhase(const char* phase) {
+  if (telemetryPublishCompleted) {
+    publishBootPhase(phase);
+    return;
+  }
+
+  logBootPhase(phase);
 }
 
 }  // namespace
@@ -226,8 +285,11 @@ bool haDiscoveryBudgetExceeded(uint32_t started, const char* nextItem) {
 bool publishHomeAssistantDiscovery() {
   homeAssistantDiscoveryRequested = false;
   logPhase("Home Assistant discovery");
-  Serial.printf("Publishing retained discovery configs under %s/#\n", kHaDiscoveryPrefix);
-  publishBootPhase("ha_discovery_start");
+  Serial.printf("Publishing retained discovery configs under %s%s/#%s\n",
+                serialStyle(SerialStyle::Topic),
+                kHaDiscoveryPrefix,
+                serialReset());
+  recordHaDiscoveryPhase("ha_discovery_start");
 
   const uint32_t started = millis();
   bool allOk = true;
@@ -258,8 +320,8 @@ bool publishHomeAssistantDiscovery() {
     }
   }
 
-  Serial.printf("Home Assistant discovery result: %s\n", allOk ? "complete" : "FAILED");
-  publishBootPhase(allOk ? "ha_discovery_done" : "ha_discovery_failed");
+  Serial.printf("Home Assistant discovery result: %s\n", serialCompleteFailed(allOk));
+  recordHaDiscoveryPhase(allOk ? "ha_discovery_done" : "ha_discovery_failed");
   return allOk;
 }
 
