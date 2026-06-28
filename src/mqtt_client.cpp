@@ -21,7 +21,11 @@ PubSubClient mqttClientInstance(wifiClient);
 bool resetCredentialsRequested = false;
 bool resetCredentialsInProgress = false;
 bool mqttResetControlsConfigured = false;
+bool mqttResetControlsArming = false;
+bool mqttResetRetainedClearEchoReceived = false;
 const char* resetCredentialsSource = nullptr;
+
+constexpr uint32_t kResetCommandArmDrainMs = 1000;
 
 void flushMqttClientOnly(uint32_t durationMs) {
   Serial.printf("Flushing MQTT for credentials reset for %lu ms\n", static_cast<unsigned long>(durationMs));
@@ -121,6 +125,27 @@ void mqttCallback(char* receivedTopic, byte* payload, unsigned int length) {
   }
 
   if (strcmp(receivedTopic, kResetCredentialsTopic) == 0) {
+    if (mqttResetControlsArming) {
+      if (length == 0) {
+        mqttResetRetainedClearEchoReceived = true;
+        Serial.printf("MQTT retained reset-credentials clear confirmed on %s%s%s\n",
+                      serialStyle(SerialStyle::Topic),
+                      kResetCredentialsTopic,
+                      serialReset());
+      } else if (parseResetCredentialsPayload(reinterpret_cast<const char*>(payload), length)) {
+        Serial.printf(
+            "Ignoring reset-credentials command on %s%s%s during reset-control arming; treating it as stale retained state\n",
+            serialStyle(SerialStyle::Topic),
+            kResetCredentialsTopic,
+            serialReset());
+      } else {
+        Serial.printf("Ignoring reset-credentials payload on %s during reset-control arming, length=%u\n",
+                      kResetCredentialsTopic,
+                      length);
+      }
+      return;
+    }
+
     if (parseResetCredentialsPayload(reinterpret_cast<const char*>(payload), length)) {
       requestCredentialsReset("mqtt");
     } else {
@@ -333,6 +358,16 @@ void waitWithMqttAndOta(uint32_t durationMs, const char* description) {
   Serial.printf("%s complete\n", description);
 }
 
+void drainResetControlMessages(const char* description) {
+  Serial.printf("%s for %lu ms\n", description, static_cast<unsigned long>(kResetCommandArmDrainMs));
+  const uint32_t started = millis();
+  while (mqttClientInstance.connected() && millis() - started < kResetCommandArmDrainMs) {
+    serviceMqttAndOta();
+    delay(10);
+  }
+  Serial.printf("%s complete\n", description);
+}
+
 bool connectMqtt() {
   logPhase("MQTT");
   const RuntimeConfig& config = runtimeConfig();
@@ -342,6 +377,8 @@ bool connectMqtt() {
   wifiClient.setConnectionTimeout(kMqttNetworkTimeoutMs);
   const bool bufferConfigured = mqttClientInstance.setBufferSize(kMqttBufferSize);
   mqttResetControlsConfigured = false;
+  mqttResetControlsArming = false;
+  mqttResetRetainedClearEchoReceived = false;
   statusConfirmationSubscribed = false;
 
   Serial.printf("MQTT server: %s%s:%u%s\n",
@@ -451,16 +488,9 @@ bool configureMqttResetControls() {
   }
 
   recordSetupPhase("reset_controls_start");
-  const bool resetCommandCleared = mqttClientInstance.publish(kResetCredentialsTopic, "", true);
-  Serial.printf("MQTT clear retained %s%s%s command: %s\n",
-                serialStyle(SerialStyle::Topic),
-                kResetCredentialsTopic,
-                serialReset(),
-                serialOkFailed(resetCommandCleared));
-  if (!resetCommandCleared) {
-    recordSetupPhase("reset_controls_failed");
-    return false;
-  }
+
+  mqttResetControlsArming = true;
+  mqttResetRetainedClearEchoReceived = false;
 
   const bool resetSubscribed = mqttClientInstance.subscribe(kResetCredentialsTopic, 1);
   Serial.printf("MQTT subscribe %s%s%s qos=1: %s\n",
@@ -468,8 +498,37 @@ bool configureMqttResetControls() {
                 kResetCredentialsTopic,
                 serialReset(),
                 serialOkFailed(resetSubscribed));
-  mqttResetControlsConfigured = resetSubscribed;
-  recordSetupPhase(mqttResetControlsConfigured ? "reset_controls_done" : "reset_controls_failed");
+  if (!resetSubscribed) {
+    mqttResetControlsArming = false;
+    recordSetupPhase("reset_controls_failed");
+    return false;
+  }
+
+  const bool resetCommandCleared = mqttClientInstance.publish(kResetCredentialsTopic, "", true);
+  Serial.printf("MQTT clear retained %s%s%s command: %s\n",
+                serialStyle(SerialStyle::Topic),
+                kResetCredentialsTopic,
+                serialReset(),
+                serialOkFailed(resetCommandCleared));
+  if (!resetCommandCleared) {
+    drainResetControlMessages("Reset-control arming failure drain");
+    const bool resetUnsubscribed = mqttClientInstance.unsubscribe(kResetCredentialsTopic);
+    Serial.printf("MQTT unsubscribe %s%s%s after reset-control clear failure: %s\n",
+                  serialStyle(SerialStyle::Topic),
+                  kResetCredentialsTopic,
+                  serialReset(),
+                  serialOkFailed(resetUnsubscribed));
+    mqttResetControlsArming = false;
+    recordSetupPhase("reset_controls_failed");
+    return false;
+  }
+
+  drainResetControlMessages("Reset-control arming drain");
+  mqttResetControlsArming = false;
+  mqttResetControlsConfigured = true;
+  Serial.printf("MQTT reset-control retained clear echo: %s\n",
+                serialYesNo(mqttResetRetainedClearEchoReceived));
+  recordSetupPhase("reset_controls_done");
   return mqttResetControlsConfigured;
 }
 

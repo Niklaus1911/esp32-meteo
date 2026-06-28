@@ -25,8 +25,8 @@ bool configureStaticWifiIp() {
   if (!localIp.fromString(config.staticIp) ||
       !gateway.fromString(config.gateway) ||
       !subnet.fromString(config.subnet)) {
-    Serial.printf("%sWiFi static IP runtime config is invalid%s; falling back to DHCP\n",
-                  serialStyle(SerialStyle::Warning),
+    Serial.printf("%sWiFi static IP runtime config is invalid%s; WiFi connection will be skipped\n",
+                  serialStyle(SerialStyle::Error),
                   serialReset());
     return false;
   }
@@ -59,7 +59,13 @@ bool connectWifi() {
                 serialStyle(SerialStyle::Value),
                 kWifiTxPowerLabel,
                 serialReset());
-  configureStaticWifiIp();
+  if (!configureStaticWifiIp()) {
+    Serial.printf("%sWiFi static IP setup failed%s; static IP is required by runtime config\n",
+                  serialStyle(SerialStyle::Error),
+                  serialReset());
+    WiFi.disconnect(false);
+    return false;
+  }
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("%sWiFi already connected%s, SSID %s%s%s, RSSI %s%d dBm%s, IP %s%s%s\n",
