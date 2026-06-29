@@ -1,7 +1,9 @@
 #include "runtime_config.h"
 
 #include <cctype>
+#include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -15,10 +17,82 @@ namespace Esp32Meteo {
 namespace {
 
 constexpr const char* kRuntimeConfigNamespace = "esp32_meteo";
+constexpr size_t kRuntimeConfigRecordCrcOffset = offsetof(RuntimeConfigRecord, crc32);
+
+static_assert(kRuntimeConfigRecordCrcOffset + sizeof(uint32_t) == sizeof(RuntimeConfigRecord),
+              "RuntimeConfigRecord crc32 must be the final field");
+static_assert(std::is_trivially_copyable<RuntimeConfigRecord>::value,
+              "RuntimeConfigRecord must stay a plain binary storage record");
 
 #if defined(ARDUINO)
+constexpr const char* kRuntimeConfigSlotAKey = "cfg_a";
+constexpr const char* kRuntimeConfigSlotBKey = "cfg_b";
+
 RuntimeConfig currentConfig;
 #endif
+
+uint32_t crc32Append(uint32_t crc, const void* data, size_t length) {
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(data);
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= bytes[i];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      const uint32_t mask = (crc & 1U) ? 0xEDB88320UL : 0U;
+      crc = (crc >> 1U) ^ mask;
+    }
+  }
+  return crc;
+}
+
+uint32_t runtimeConfigRecordCrc(const RuntimeConfigRecord& record) {
+  uint32_t crc = 0xFFFFFFFFUL;
+  crc = crc32Append(crc, &record.magic, sizeof(record.magic));
+  crc = crc32Append(crc, &record.recordVersion, sizeof(record.recordVersion));
+  crc = crc32Append(crc, &record.reserved, sizeof(record.reserved));
+  crc = crc32Append(crc, &record.sequence, sizeof(record.sequence));
+  crc = crc32Append(crc, &record.payload.schemaVersion, sizeof(record.payload.schemaVersion));
+  crc = crc32Append(crc, &record.payload.mqttPort, sizeof(record.payload.mqttPort));
+  crc = crc32Append(crc, &record.payload.batteryChemistryId, sizeof(record.payload.batteryChemistryId));
+  crc = crc32Append(crc, &record.payload.hasStaticIp, sizeof(record.payload.hasStaticIp));
+  crc = crc32Append(crc, record.payload.reserved, sizeof(record.payload.reserved));
+  crc = crc32Append(crc, record.payload.mqttHost, sizeof(record.payload.mqttHost));
+  crc = crc32Append(crc, record.payload.mqttUsername, sizeof(record.payload.mqttUsername));
+  crc = crc32Append(crc, record.payload.mqttPassword, sizeof(record.payload.mqttPassword));
+  crc = crc32Append(crc, record.payload.otaPassword, sizeof(record.payload.otaPassword));
+  crc = crc32Append(crc, record.payload.staticIp, sizeof(record.payload.staticIp));
+  crc = crc32Append(crc, record.payload.gateway, sizeof(record.payload.gateway));
+  crc = crc32Append(crc, record.payload.subnet, sizeof(record.payload.subnet));
+  return crc ^ 0xFFFFFFFFUL;
+}
+
+bool isNullTerminated(const char* value, size_t size) {
+  return std::memchr(value, '\0', size) != nullptr;
+}
+
+bool runtimeConfigPayloadStringsTerminated(const RuntimeConfigRecordPayload& payload) {
+  return isNullTerminated(payload.mqttHost, sizeof(payload.mqttHost)) &&
+         isNullTerminated(payload.mqttUsername, sizeof(payload.mqttUsername)) &&
+         isNullTerminated(payload.mqttPassword, sizeof(payload.mqttPassword)) &&
+         isNullTerminated(payload.otaPassword, sizeof(payload.otaPassword)) &&
+         isNullTerminated(payload.staticIp, sizeof(payload.staticIp)) &&
+         isNullTerminated(payload.gateway, sizeof(payload.gateway)) &&
+         isNullTerminated(payload.subnet, sizeof(payload.subnet));
+}
+
+RuntimeConfig runtimeConfigFromPayload(const RuntimeConfigRecordPayload& payload) {
+  RuntimeConfig config;
+  config.schemaVersion = payload.schemaVersion;
+  config.mqttPort = payload.mqttPort;
+  config.batteryChemistryId = payload.batteryChemistryId;
+  config.hasStaticIp = payload.hasStaticIp != 0;
+  std::memcpy(config.mqttHost, payload.mqttHost, sizeof(config.mqttHost));
+  std::memcpy(config.mqttUsername, payload.mqttUsername, sizeof(config.mqttUsername));
+  std::memcpy(config.mqttPassword, payload.mqttPassword, sizeof(config.mqttPassword));
+  std::memcpy(config.otaPassword, payload.otaPassword, sizeof(config.otaPassword));
+  std::memcpy(config.staticIp, payload.staticIp, sizeof(config.staticIp));
+  std::memcpy(config.gateway, payload.gateway, sizeof(config.gateway));
+  std::memcpy(config.subnet, payload.subnet, sizeof(config.subnet));
+  return config;
+}
 
 bool isBlank(const char* value) {
   return !value || value[0] == '\0';
@@ -117,6 +191,140 @@ void logRuntimeConfigSummary(const RuntimeConfig& config) {
     Serial.printf("Runtime config: static IP %s; DHCP will be used\n", serialEnabledDisabled(false));
   }
 }
+
+RuntimeConfigRecordStatus readRuntimeConfigRecordSlot(Preferences& preferences,
+                                                      const char* key,
+                                                      RuntimeConfigRecord& record) {
+  record = RuntimeConfigRecord{};
+  const size_t length = preferences.getBytesLength(key);
+  if (length == 0) {
+    return RuntimeConfigRecordStatus::Missing;
+  }
+  if (length != sizeof(RuntimeConfigRecord)) {
+    return RuntimeConfigRecordStatus::WrongSize;
+  }
+
+  const size_t bytesRead = preferences.getBytes(key, &record, sizeof(record));
+  if (bytesRead != sizeof(record)) {
+    return RuntimeConfigRecordStatus::WrongSize;
+  }
+  return validateRuntimeConfigRecord(record);
+}
+
+bool writeRuntimeConfigRecordSlot(Preferences& preferences,
+                                  const char* key,
+                                  const RuntimeConfig& config,
+                                  uint32_t sequence) {
+  const RuntimeConfigRecord record = makeRuntimeConfigRecord(config, sequence);
+  const size_t bytesWritten = preferences.putBytes(key, &record, sizeof(record));
+  if (bytesWritten != sizeof(record)) {
+    return false;
+  }
+
+  RuntimeConfigRecord verified;
+  const RuntimeConfigRecordStatus status = readRuntimeConfigRecordSlot(preferences, key, verified);
+  return status == RuntimeConfigRecordStatus::Valid &&
+         std::memcmp(&verified, &record, sizeof(record)) == 0;
+}
+
+void logRuntimeConfigSlotStatus(char slotLabel,
+                                RuntimeConfigRecordStatus status,
+                                const RuntimeConfigRecord& record) {
+  const SerialStyle style = status == RuntimeConfigRecordStatus::Valid ? SerialStyle::Success
+                                                                       : SerialStyle::Warning;
+  Serial.printf("Runtime config protected slot %c: %s%s%s",
+                slotLabel,
+                serialStyle(style),
+                runtimeConfigRecordStatusName(status),
+                serialReset());
+  if (status == RuntimeConfigRecordStatus::Valid) {
+    Serial.printf(", sequence %s%lu%s",
+                  serialStyle(SerialStyle::Value),
+                  static_cast<unsigned long>(record.sequence),
+                  serialReset());
+  }
+  Serial.println();
+}
+
+bool readLegacyRuntimeConfig(Preferences& preferences, RuntimeConfig& loaded, const char*& reason) {
+  loaded = RuntimeConfig{};
+  loaded.schemaVersion = preferences.getUShort("schema", 0);
+  loaded.mqttPort = preferences.getUShort("mqtt_port", 0);
+  loaded.batteryChemistryId = preferences.getUChar("batt_chem", 255);
+
+  const bool stringsOk = readPreferenceString(preferences, "mqtt_host", loaded.mqttHost, sizeof(loaded.mqttHost)) &&
+                         readPreferenceString(preferences, "mqtt_user", loaded.mqttUsername, sizeof(loaded.mqttUsername)) &&
+                         readPreferenceString(preferences, "mqtt_pass", loaded.mqttPassword, sizeof(loaded.mqttPassword)) &&
+                         readPreferenceString(preferences, "ota_pass", loaded.otaPassword, sizeof(loaded.otaPassword)) &&
+                         readPreferenceString(preferences, "static_ip", loaded.staticIp, sizeof(loaded.staticIp)) &&
+                         readPreferenceString(preferences, "gateway", loaded.gateway, sizeof(loaded.gateway)) &&
+                         readPreferenceString(preferences, "subnet", loaded.subnet, sizeof(loaded.subnet));
+  if (!stringsOk) {
+    reason = "stored_value_too_long";
+    return false;
+  }
+
+  loaded.hasStaticIp = loaded.staticIp[0] || loaded.gateway[0] || loaded.subnet[0];
+  const RuntimeConfigValidation validation = validateRuntimeConfig(loaded);
+  if (!validation.valid) {
+    reason = validation.reason;
+    return false;
+  }
+
+  reason = "ok";
+  loaded = normalizedRuntimeConfig(loaded);
+  return true;
+}
+
+bool writeLegacyRuntimeConfig(Preferences& preferences, const RuntimeConfig& config) {
+  bool ok = true;
+  ok &= preferences.putUShort("schema", config.schemaVersion) > 0;
+  ok &= writePreferenceString(preferences, "mqtt_host", config.mqttHost);
+  ok &= preferences.putUShort("mqtt_port", config.mqttPort) > 0;
+  ok &= writePreferenceString(preferences, "mqtt_user", config.mqttUsername);
+  ok &= writePreferenceString(preferences, "mqtt_pass", config.mqttPassword);
+  ok &= writePreferenceString(preferences, "ota_pass", config.otaPassword);
+  ok &= preferences.putUChar("batt_chem", config.batteryChemistryId) > 0;
+  ok &= writePreferenceString(preferences, "static_ip", config.staticIp);
+  ok &= writePreferenceString(preferences, "gateway", config.gateway);
+  ok &= writePreferenceString(preferences, "subnet", config.subnet);
+  return ok;
+}
+
+const char* runtimeConfigSlotKey(int slotIndex) {
+  return slotIndex == 0 ? kRuntimeConfigSlotAKey : kRuntimeConfigSlotBKey;
+}
+
+char runtimeConfigSlotLabel(int slotIndex) {
+  return slotIndex == 0 ? 'A' : 'B';
+}
+
+uint32_t nextRuntimeConfigSequence(const RuntimeConfigRecord& first,
+                                   RuntimeConfigRecordStatus firstStatus,
+                                   const RuntimeConfigRecord& second,
+                                   RuntimeConfigRecordStatus secondStatus) {
+  uint32_t highest = 0;
+  if (firstStatus == RuntimeConfigRecordStatus::Valid && first.sequence > highest) {
+    highest = first.sequence;
+  }
+  if (secondStatus == RuntimeConfigRecordStatus::Valid && second.sequence > highest) {
+    highest = second.sequence;
+  }
+  return highest >= 0xFFFFFFFEUL ? 1 : highest + 1;
+}
+
+int firstRuntimeConfigSaveSlot(const RuntimeConfigRecord& first,
+                               RuntimeConfigRecordStatus firstStatus,
+                               const RuntimeConfigRecord& second,
+                               RuntimeConfigRecordStatus secondStatus) {
+  if (firstStatus != RuntimeConfigRecordStatus::Valid) {
+    return 0;
+  }
+  if (secondStatus != RuntimeConfigRecordStatus::Valid) {
+    return 1;
+  }
+  return first.sequence <= second.sequence ? 0 : 1;
+}
 #endif
 
 }  // namespace
@@ -188,7 +396,10 @@ bool isValidBatteryChemistryId(uint8_t chemistryId) {
 
 bool parseBatteryChemistry(const char* value, uint8_t& chemistryId) {
   char normalized[16];
-  if (!copyTrimmed(normalized, sizeof(normalized), value) || normalized[0] == '\0') {
+  if (!copyTrimmed(normalized, sizeof(normalized), value)) {
+    return false;
+  }
+  if (normalized[0] == '\0') {
     chemistryId = kRuntimeBatteryChemistryLiIon;
     return true;
   }
@@ -300,6 +511,100 @@ RuntimeConfig normalizedRuntimeConfig(const RuntimeConfig& config) {
   return normalized;
 }
 
+RuntimeConfigRecord makeRuntimeConfigRecord(const RuntimeConfig& config, uint32_t sequence) {
+  const RuntimeConfig normalized = normalizedRuntimeConfig(config);
+  RuntimeConfigRecord record{};
+  std::memset(&record, 0, sizeof(record));
+  record.magic = kRuntimeConfigRecordMagic;
+  record.recordVersion = kRuntimeConfigRecordVersion;
+  record.reserved = 0;
+  record.sequence = sequence;
+  record.payload.schemaVersion = normalized.schemaVersion;
+  record.payload.mqttPort = normalized.mqttPort;
+  record.payload.batteryChemistryId = normalized.batteryChemistryId;
+  record.payload.hasStaticIp = normalized.hasStaticIp ? 1 : 0;
+  record.payload.reserved[0] = 0;
+  record.payload.reserved[1] = 0;
+  std::memcpy(record.payload.mqttHost, normalized.mqttHost, sizeof(record.payload.mqttHost));
+  std::memcpy(record.payload.mqttUsername, normalized.mqttUsername, sizeof(record.payload.mqttUsername));
+  std::memcpy(record.payload.mqttPassword, normalized.mqttPassword, sizeof(record.payload.mqttPassword));
+  std::memcpy(record.payload.otaPassword, normalized.otaPassword, sizeof(record.payload.otaPassword));
+  std::memcpy(record.payload.staticIp, normalized.staticIp, sizeof(record.payload.staticIp));
+  std::memcpy(record.payload.gateway, normalized.gateway, sizeof(record.payload.gateway));
+  std::memcpy(record.payload.subnet, normalized.subnet, sizeof(record.payload.subnet));
+  record.crc32 = runtimeConfigRecordCrc(record);
+  return record;
+}
+
+RuntimeConfigRecordStatus validateRuntimeConfigRecord(const RuntimeConfigRecord& record) {
+  if (record.magic != kRuntimeConfigRecordMagic) {
+    return RuntimeConfigRecordStatus::BadMagic;
+  }
+  if (record.recordVersion != kRuntimeConfigRecordVersion) {
+    return RuntimeConfigRecordStatus::UnsupportedVersion;
+  }
+  if (record.crc32 != runtimeConfigRecordCrc(record)) {
+    return RuntimeConfigRecordStatus::CrcMismatch;
+  }
+  if (!runtimeConfigPayloadStringsTerminated(record.payload)) {
+    return RuntimeConfigRecordStatus::SemanticInvalid;
+  }
+
+  const RuntimeConfig config = runtimeConfigFromPayload(record.payload);
+  const RuntimeConfigValidation validation = validateRuntimeConfig(config);
+  if (!validation.valid || record.payload.hasStaticIp > 1) {
+    return RuntimeConfigRecordStatus::SemanticInvalid;
+  }
+  return RuntimeConfigRecordStatus::Valid;
+}
+
+bool runtimeConfigFromRecord(const RuntimeConfigRecord& record, RuntimeConfig& config) {
+  if (validateRuntimeConfigRecord(record) != RuntimeConfigRecordStatus::Valid) {
+    return false;
+  }
+
+  config = runtimeConfigFromPayload(record.payload);
+  return true;
+}
+
+int selectRuntimeConfigRecord(const RuntimeConfigRecord& first,
+                              RuntimeConfigRecordStatus firstStatus,
+                              const RuntimeConfigRecord& second,
+                              RuntimeConfigRecordStatus secondStatus) {
+  const bool firstValid = firstStatus == RuntimeConfigRecordStatus::Valid;
+  const bool secondValid = secondStatus == RuntimeConfigRecordStatus::Valid;
+  if (firstValid && secondValid) {
+    return second.sequence > first.sequence ? 1 : 0;
+  }
+  if (firstValid) {
+    return 0;
+  }
+  if (secondValid) {
+    return 1;
+  }
+  return -1;
+}
+
+const char* runtimeConfigRecordStatusName(RuntimeConfigRecordStatus status) {
+  switch (status) {
+    case RuntimeConfigRecordStatus::Valid:
+      return "valid";
+    case RuntimeConfigRecordStatus::Missing:
+      return "missing";
+    case RuntimeConfigRecordStatus::WrongSize:
+      return "wrong_size";
+    case RuntimeConfigRecordStatus::BadMagic:
+      return "bad_magic";
+    case RuntimeConfigRecordStatus::UnsupportedVersion:
+      return "unsupported_version";
+    case RuntimeConfigRecordStatus::CrcMismatch:
+      return "crc_mismatch";
+    case RuntimeConfigRecordStatus::SemanticInvalid:
+      return "semantic_invalid";
+  }
+  return "unknown";
+}
+
 #if defined(ARDUINO)
 const RuntimeConfig& runtimeConfig() {
   return currentConfig;
@@ -307,7 +612,7 @@ const RuntimeConfig& runtimeConfig() {
 
 bool loadRuntimeConfig() {
   Preferences preferences;
-  if (!preferences.begin(kRuntimeConfigNamespace, true)) {
+  if (!preferences.begin(kRuntimeConfigNamespace, false)) {
     Serial.printf("%sRuntime config load failed%s: Preferences namespace unavailable\n",
                   serialStyle(SerialStyle::Error),
                   serialReset());
@@ -315,40 +620,76 @@ bool loadRuntimeConfig() {
     return false;
   }
 
-  RuntimeConfig loaded;
-  loaded.schemaVersion = preferences.getUShort("schema", 0);
-  loaded.mqttPort = preferences.getUShort("mqtt_port", 0);
-  loaded.batteryChemistryId = preferences.getUChar("batt_chem", 255);
+  RuntimeConfigRecord slotA;
+  RuntimeConfigRecord slotB;
+  const RuntimeConfigRecordStatus slotAStatus =
+      readRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotAKey, slotA);
+  const RuntimeConfigRecordStatus slotBStatus =
+      readRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotBKey, slotB);
+  logRuntimeConfigSlotStatus('A', slotAStatus, slotA);
+  logRuntimeConfigSlotStatus('B', slotBStatus, slotB);
 
-  const bool stringsOk = readPreferenceString(preferences, "mqtt_host", loaded.mqttHost, sizeof(loaded.mqttHost)) &&
-                         readPreferenceString(preferences, "mqtt_user", loaded.mqttUsername, sizeof(loaded.mqttUsername)) &&
-                         readPreferenceString(preferences, "mqtt_pass", loaded.mqttPassword, sizeof(loaded.mqttPassword)) &&
-                         readPreferenceString(preferences, "ota_pass", loaded.otaPassword, sizeof(loaded.otaPassword)) &&
-                         readPreferenceString(preferences, "static_ip", loaded.staticIp, sizeof(loaded.staticIp)) &&
-                         readPreferenceString(preferences, "gateway", loaded.gateway, sizeof(loaded.gateway)) &&
-                         readPreferenceString(preferences, "subnet", loaded.subnet, sizeof(loaded.subnet));
-  preferences.end();
+  const int selectedSlot = selectRuntimeConfigRecord(slotA, slotAStatus, slotB, slotBStatus);
+  if (selectedSlot >= 0) {
+    const RuntimeConfigRecord& selectedRecord = selectedSlot == 0 ? slotA : slotB;
+    RuntimeConfig loaded;
+    if (!runtimeConfigFromRecord(selectedRecord, loaded)) {
+      preferences.end();
+      Serial.printf("%sRuntime config protected load failed%s: selected slot did not decode\n",
+                    serialStyle(SerialStyle::Error),
+                    serialReset());
+      currentConfig = RuntimeConfig{};
+      return false;
+    }
 
-  loaded.hasStaticIp = loaded.staticIp[0] || loaded.gateway[0] || loaded.subnet[0];
-  currentConfig = loaded;
-
-  if (!stringsOk) {
-    Serial.printf("%sRuntime config load failed%s: stored value exceeds firmware limit\n",
-                  serialStyle(SerialStyle::Error),
+    currentConfig = normalizedRuntimeConfig(loaded);
+    Serial.printf("%sRuntime config loaded from protected NVS slot %c%s\n",
+                  serialStyle(SerialStyle::Success),
+                  runtimeConfigSlotLabel(selectedSlot),
                   serialReset());
-    return false;
+
+    const int otherSlot = selectedSlot == 0 ? 1 : 0;
+    const RuntimeConfigRecordStatus otherStatus = selectedSlot == 0 ? slotBStatus : slotAStatus;
+    if (otherStatus != RuntimeConfigRecordStatus::Valid) {
+      const uint32_t repairSequence =
+          selectedRecord.sequence >= 0xFFFFFFFEUL ? 1 : selectedRecord.sequence + 1;
+      const bool repaired = writeRuntimeConfigRecordSlot(preferences,
+                                                         runtimeConfigSlotKey(otherSlot),
+                                                         currentConfig,
+                                                         repairSequence);
+      Serial.printf("Runtime config protected slot %c repair: %s\n",
+                    runtimeConfigSlotLabel(otherSlot),
+                    serialOkFailed(repaired));
+    }
+
+    preferences.end();
+    logRuntimeConfigSummary(currentConfig);
+    return true;
   }
 
-  const RuntimeConfigValidation validation = validateRuntimeConfig(currentConfig);
-  if (!validation.valid) {
-    Serial.printf("%sRuntime config invalid or missing%s: %s\n",
+  RuntimeConfig legacyConfig;
+  const char* legacyReason = "unknown";
+  const bool legacyOk = readLegacyRuntimeConfig(preferences, legacyConfig, legacyReason);
+  if (!legacyOk) {
+    preferences.end();
+    Serial.printf("%sRuntime config invalid or missing%s: protected slots unusable, legacy reason %s\n",
                   serialStyle(SerialStyle::Warning),
                   serialReset(),
-                  validation.reason);
+                  legacyReason);
+    currentConfig = RuntimeConfig{};
     return false;
   }
 
-  Serial.printf("%sRuntime config loaded from NVS%s\n", serialStyle(SerialStyle::Success), serialReset());
+  const bool slotAOk = writeRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotAKey, legacyConfig, 1);
+  const bool slotBOk = writeRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotBKey, legacyConfig, 2);
+  preferences.end();
+
+  currentConfig = legacyConfig;
+  Serial.printf("%sRuntime config loaded from legacy NVS%s; protected migration slot A: %s, slot B: %s\n",
+                serialStyle(SerialStyle::Success),
+                serialReset(),
+                serialOkFailed(slotAOk),
+                serialOkFailed(slotBOk));
   logRuntimeConfigSummary(currentConfig);
   return true;
 }
@@ -373,26 +714,47 @@ bool saveRuntimeConfig(const RuntimeConfig& config) {
     return false;
   }
 
-  bool ok = preferences.clear();
-  ok &= preferences.putUShort("schema", normalized.schemaVersion) > 0;
-  ok &= writePreferenceString(preferences, "mqtt_host", normalized.mqttHost);
-  ok &= preferences.putUShort("mqtt_port", normalized.mqttPort) > 0;
-  ok &= writePreferenceString(preferences, "mqtt_user", normalized.mqttUsername);
-  ok &= writePreferenceString(preferences, "mqtt_pass", normalized.mqttPassword);
-  ok &= writePreferenceString(preferences, "ota_pass", normalized.otaPassword);
-  ok &= preferences.putUChar("batt_chem", normalized.batteryChemistryId) > 0;
-  ok &= writePreferenceString(preferences, "static_ip", normalized.staticIp);
-  ok &= writePreferenceString(preferences, "gateway", normalized.gateway);
-  ok &= writePreferenceString(preferences, "subnet", normalized.subnet);
+  RuntimeConfigRecord slotA;
+  RuntimeConfigRecord slotB;
+  const RuntimeConfigRecordStatus slotAStatus =
+      readRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotAKey, slotA);
+  const RuntimeConfigRecordStatus slotBStatus =
+      readRuntimeConfigRecordSlot(preferences, kRuntimeConfigSlotBKey, slotB);
+  const int firstSlot = firstRuntimeConfigSaveSlot(slotA, slotAStatus, slotB, slotBStatus);
+  const int secondSlot = firstSlot == 0 ? 1 : 0;
+  const uint32_t firstSequence = nextRuntimeConfigSequence(slotA, slotAStatus, slotB, slotBStatus);
+  const uint32_t secondSequence = firstSequence >= 0xFFFFFFFEUL ? 1 : firstSequence + 1;
+
+  const bool firstOk = writeRuntimeConfigRecordSlot(preferences,
+                                                    runtimeConfigSlotKey(firstSlot),
+                                                    normalized,
+                                                    firstSequence);
+  const bool secondOk = firstOk &&
+                        writeRuntimeConfigRecordSlot(preferences,
+                                                     runtimeConfigSlotKey(secondSlot),
+                                                     normalized,
+                                                     secondSequence);
+  const bool legacyOk = firstOk && secondOk && writeLegacyRuntimeConfig(preferences, normalized);
   preferences.end();
 
-  if (!ok) {
+  if (!firstOk || !secondOk) {
     Serial.printf("%sRuntime config save failed%s\n", serialStyle(SerialStyle::Error), serialReset());
     return false;
   }
 
   currentConfig = normalized;
-  Serial.printf("%sRuntime config saved to NVS%s\n", serialStyle(SerialStyle::Success), serialReset());
+  Serial.printf("%sRuntime config saved to protected NVS%s: slot %c sequence %lu, slot %c sequence %lu\n",
+                serialStyle(SerialStyle::Success),
+                serialReset(),
+                runtimeConfigSlotLabel(firstSlot),
+                static_cast<unsigned long>(firstSequence),
+                runtimeConfigSlotLabel(secondSlot),
+                static_cast<unsigned long>(secondSequence));
+  if (!legacyOk) {
+    Serial.printf("%sRuntime config legacy mirror update failed%s; protected slots remain valid\n",
+                  serialStyle(SerialStyle::Warning),
+                  serialReset());
+  }
   logRuntimeConfigSummary(currentConfig);
   return true;
 }

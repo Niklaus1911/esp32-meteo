@@ -32,6 +32,43 @@ struct RuntimeConfig {
   char subnet[kRuntimeConfigIpv4MaxLength + 1] = "";
 };
 
+constexpr uint32_t kRuntimeConfigRecordMagic = 0x4D455443UL;
+constexpr uint16_t kRuntimeConfigRecordVersion = 1;
+
+struct RuntimeConfigRecordPayload {
+  uint16_t schemaVersion;
+  uint16_t mqttPort;
+  uint8_t batteryChemistryId;
+  uint8_t hasStaticIp;
+  uint8_t reserved[2];
+  char mqttHost[kRuntimeConfigMqttHostMaxLength + 1];
+  char mqttUsername[kRuntimeConfigMqttUsernameMaxLength + 1];
+  char mqttPassword[kRuntimeConfigMqttPasswordMaxLength + 1];
+  char otaPassword[kRuntimeConfigOtaPasswordMaxLength + 1];
+  char staticIp[kRuntimeConfigIpv4MaxLength + 1];
+  char gateway[kRuntimeConfigIpv4MaxLength + 1];
+  char subnet[kRuntimeConfigIpv4MaxLength + 1];
+};
+
+struct RuntimeConfigRecord {
+  uint32_t magic;
+  uint16_t recordVersion;
+  uint16_t reserved;
+  uint32_t sequence;
+  RuntimeConfigRecordPayload payload;
+  uint32_t crc32;
+};
+
+enum class RuntimeConfigRecordStatus : uint8_t {
+  Valid,
+  Missing,
+  WrongSize,
+  BadMagic,
+  UnsupportedVersion,
+  CrcMismatch,
+  SemanticInvalid,
+};
+
 struct RuntimeConfigValidation {
   bool valid;
   const char* reason;
@@ -56,6 +93,14 @@ bool populateRuntimeConfig(RuntimeConfig& config,
                            const char* subnet);
 RuntimeConfigValidation validateRuntimeConfig(const RuntimeConfig& config);
 RuntimeConfig normalizedRuntimeConfig(const RuntimeConfig& config);
+RuntimeConfigRecord makeRuntimeConfigRecord(const RuntimeConfig& config, uint32_t sequence);
+RuntimeConfigRecordStatus validateRuntimeConfigRecord(const RuntimeConfigRecord& record);
+bool runtimeConfigFromRecord(const RuntimeConfigRecord& record, RuntimeConfig& config);
+int selectRuntimeConfigRecord(const RuntimeConfigRecord& first,
+                              RuntimeConfigRecordStatus firstStatus,
+                              const RuntimeConfigRecord& second,
+                              RuntimeConfigRecordStatus secondStatus);
+const char* runtimeConfigRecordStatusName(RuntimeConfigRecordStatus status);
 
 #if defined(ARDUINO)
 const RuntimeConfig& runtimeConfig();

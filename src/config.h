@@ -58,7 +58,48 @@
 #define ESP32_METEO_SERIAL_ANSI_COLORS 1
 #endif
 
+#ifndef ESP32_METEO_WIFI_TX_POWER
+#define ESP32_METEO_WIFI_TX_POWER WIFI_POWER_11dBm
+#endif
+
 namespace Esp32Meteo {
+
+constexpr const char* wifiTxPowerLabel(wifi_power_t power) {
+  switch (power) {
+    case WIFI_POWER_21dBm:
+      return "21 dBm";
+    case WIFI_POWER_20_5dBm:
+      return "20.5 dBm";
+    case WIFI_POWER_20dBm:
+      return "20 dBm";
+    case WIFI_POWER_19_5dBm:
+      return "19.5 dBm";
+    case WIFI_POWER_19dBm:
+      return "19 dBm";
+    case WIFI_POWER_18_5dBm:
+      return "18.5 dBm";
+    case WIFI_POWER_17dBm:
+      return "17 dBm";
+    case WIFI_POWER_15dBm:
+      return "15 dBm";
+    case WIFI_POWER_13dBm:
+      return "13 dBm";
+    case WIFI_POWER_11dBm:
+      return "11 dBm";
+    case WIFI_POWER_8_5dBm:
+      return "8.5 dBm";
+    case WIFI_POWER_7dBm:
+      return "7 dBm";
+    case WIFI_POWER_5dBm:
+      return "5 dBm";
+    case WIFI_POWER_2dBm:
+      return "2 dBm";
+    case WIFI_POWER_MINUS_1dBm:
+      return "-1 dBm";
+    default:
+      return "custom";
+  }
+}
 
 constexpr uint32_t kSerialBaud = 115200;
 constexpr bool kSerialAnsiColors = ESP32_METEO_SERIAL_ANSI_COLORS != 0;
@@ -116,8 +157,8 @@ constexpr uint8_t kBmp390InitAttempts = 3;
 constexpr uint8_t kI2cRecoveryClockPulses = 9;
 constexpr uint32_t kI2cRecoveryPulseDelayUs = 5;
 constexpr uint32_t kCpuFrequencyMhz = 80;
-constexpr wifi_power_t kWifiTxPower = WIFI_POWER_11dBm;
-constexpr const char* kWifiTxPowerLabel = "11 dBm";
+constexpr wifi_power_t kWifiTxPower = ESP32_METEO_WIFI_TX_POWER;
+constexpr const char* kWifiTxPowerLabel = wifiTxPowerLabel(kWifiTxPower);
 constexpr size_t kMqttBufferSize = 2048;
 constexpr size_t kMqttMaxHeaderBytes = 5;
 

@@ -178,6 +178,7 @@ void testRuntimeConfigBatteryChemistryValidation() {
   assert(parseBatteryChemistry("", chemistryId));
   assert(chemistryId == kRuntimeBatteryChemistryLiIon);
   assert(!parseBatteryChemistry("alkaline", chemistryId));
+  assert(!parseBatteryChemistry("battery_chemistry_value_too_long", chemistryId));
   assert(strcmp(batteryChemistryName(kRuntimeBatteryChemistryLiFePO4), "LiFePO4") == 0);
   assert(strcmp(batteryChemistryKey(kRuntimeBatteryChemistryLiIon), "li_ion") == 0);
 }
@@ -260,6 +261,69 @@ void testRuntimeConfigNormalization() {
   assert(validateRuntimeConfig(normalized).valid);
 }
 
+void testRuntimeConfigRecordRoundTrip() {
+  RuntimeConfig config;
+  assert(populateRuntimeConfig(config,
+                               "mqtt.local",
+                               1883,
+                               "mqtt-user",
+                               "mqtt-pass",
+                               "ota-pass",
+                               "lifepo4",
+                               "192.168.1.50",
+                               "192.168.1.1",
+                               "255.255.255.0"));
+
+  const RuntimeConfigRecord record = makeRuntimeConfigRecord(config, 42);
+  assert(record.sequence == 42);
+  assert(validateRuntimeConfigRecord(record) == RuntimeConfigRecordStatus::Valid);
+
+  RuntimeConfig decoded;
+  assert(runtimeConfigFromRecord(record, decoded));
+  assert(strcmp(decoded.mqttHost, "mqtt.local") == 0);
+  assert(strcmp(decoded.mqttUsername, "mqtt-user") == 0);
+  assert(decoded.batteryChemistryId == kRuntimeBatteryChemistryLiFePO4);
+  assert(decoded.hasStaticIp);
+  assert(strcmp(decoded.gateway, "192.168.1.1") == 0);
+}
+
+void testRuntimeConfigRecordDetectsSilentMutation() {
+  RuntimeConfig config = makeValidRuntimeConfig();
+  RuntimeConfigRecord record = makeRuntimeConfigRecord(config, 7);
+  assert(validateRuntimeConfigRecord(record) == RuntimeConfigRecordStatus::Valid);
+
+  strcpy(record.payload.mqttHost, "192.168.1.11");
+  assert(validateRuntimeConfigRecord(record) == RuntimeConfigRecordStatus::CrcMismatch);
+
+  RuntimeConfig decoded;
+  assert(!runtimeConfigFromRecord(record, decoded));
+}
+
+void testRuntimeConfigRecordSelection() {
+  RuntimeConfig config = makeValidRuntimeConfig();
+  RuntimeConfigRecord older = makeRuntimeConfigRecord(config, 10);
+  RuntimeConfigRecord newer = makeRuntimeConfigRecord(config, 11);
+
+  assert(selectRuntimeConfigRecord(older,
+                                   validateRuntimeConfigRecord(older),
+                                   newer,
+                                   validateRuntimeConfigRecord(newer)) == 1);
+
+  newer.crc32 ^= 0x01;
+  assert(validateRuntimeConfigRecord(newer) == RuntimeConfigRecordStatus::CrcMismatch);
+  assert(selectRuntimeConfigRecord(older,
+                                   validateRuntimeConfigRecord(older),
+                                   newer,
+                                   validateRuntimeConfigRecord(newer)) == 0);
+
+  older.crc32 ^= 0x01;
+  assert(selectRuntimeConfigRecord(older,
+                                   validateRuntimeConfigRecord(older),
+                                   newer,
+                                   validateRuntimeConfigRecord(newer)) == -1);
+  assert(strcmp(runtimeConfigRecordStatusName(RuntimeConfigRecordStatus::CrcMismatch), "crc_mismatch") == 0);
+}
+
 void testRuntimeConfigTrimmingAndLengthLimits() {
   RuntimeConfig config;
   assert(populateRuntimeConfig(config,
@@ -313,6 +377,9 @@ int main() {
   testProvisioningIpModeLogic();
   testRuntimeConfigValidation();
   testRuntimeConfigNormalization();
+  testRuntimeConfigRecordRoundTrip();
+  testRuntimeConfigRecordDetectsSilentMutation();
+  testRuntimeConfigRecordSelection();
   testRuntimeConfigTrimmingAndLengthLimits();
   return 0;
 }
