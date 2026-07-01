@@ -169,6 +169,13 @@ python -m platformio run -e esp32dev
 python -m platformio run -e esp32c3
 ```
 
+On Windows with PlatformIO installed in the default per-user location, you can also run:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e esp32dev
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e esp32c3
+```
+
 ## Serial Logs
 
 Serial output uses ANSI colors by default to make phases, successful actions, warnings, errors, MQTT topics, and measured values easier to scan. The project enables PlatformIO raw monitor mode so ANSI escape sequences pass through to the terminal instead of being printed as visible `␛` characters.
@@ -213,6 +220,12 @@ Run the full local quality gate before pushing firmware changes:
 python3 scripts/check_project.py
 ```
 
+On Windows, use the PowerShell wrapper. It uses PlatformIO's bundled Python and adds PlatformIO's Scripts directory to `PATH` for that process:
+
+```powershell
+.\scripts\check_project.ps1
+```
+
 The check verifies:
 
 - whitespace is clean;
@@ -222,6 +235,8 @@ The check verifies:
 - host-side C++ logic tests pass;
 - all four PlatformIO environments build;
 - ESP32 and ESP32-C3 firmware identity strings are correct.
+
+For the full local quality gate on Windows, install Git for Windows and one host C++ compiler. MSYS2 UCRT64 `g++` is the recommended default; MSYS2 CLANG64 `clang++` and Visual Studio Build Tools `cl.exe` are also supported. Firmware builds only require PlatformIO, but the host-side C++ logic tests require one of these compilers.
 
 GitHub Actions runs the same project check on pushes and pull requests. CI builds do not require local secrets.
 

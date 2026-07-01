@@ -16,7 +16,6 @@ namespace Esp32Meteo {
 
 namespace {
 
-constexpr const char* kRuntimeConfigNamespace = "esp32_meteo";
 constexpr size_t kRuntimeConfigRecordCrcOffset = offsetof(RuntimeConfigRecord, crc32);
 
 static_assert(kRuntimeConfigRecordCrcOffset + sizeof(uint32_t) == sizeof(RuntimeConfigRecord),
@@ -25,6 +24,7 @@ static_assert(std::is_trivially_copyable<RuntimeConfigRecord>::value,
               "RuntimeConfigRecord must stay a plain binary storage record");
 
 #if defined(ARDUINO)
+constexpr const char* kRuntimeConfigNamespace = "esp32_meteo";
 constexpr const char* kRuntimeConfigSlotAKey = "cfg_a";
 constexpr const char* kRuntimeConfigSlotBKey = "cfg_b";
 

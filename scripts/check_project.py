@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -12,7 +13,6 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-PIO_FALLBACK = Path.home() / ".platformio" / "penv" / "bin" / "pio"
 
 BUILD_ENVS = ("esp32dev", "esp32dev_ota", "esp32c3", "esp32c3_ota")
 FORBIDDEN_TRACKED_PATHS = (
@@ -88,13 +88,49 @@ def git_lines(*args: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
+def platformio_virtualenv_candidates() -> list[Path]:
+    core_dirs: list[Path] = []
+    configured_core_dir = os.environ.get("PLATFORMIO_CORE_DIR")
+    if configured_core_dir:
+        core_dirs.append(Path(configured_core_dir).expanduser())
+    core_dirs.append(Path.home() / ".platformio")
+
+    candidates: list[Path] = []
+    for core_dir in core_dirs:
+        candidates.extend(
+            (
+                core_dir / "penv" / "Scripts" / "pio.exe",
+                core_dir / "penv" / "Scripts" / "platformio.exe",
+                core_dir / "penv" / "bin" / "pio",
+                core_dir / "penv" / "bin" / "platformio",
+            )
+        )
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+    return unique_candidates
+
+
 def pio_command() -> str:
-    if PIO_FALLBACK.exists():
-        return str(PIO_FALLBACK)
-    found = shutil.which("pio")
-    if found:
-        return found
-    fail("PlatformIO executable not found; install pio or use the PlatformIO virtualenv")
+    for executable in ("pio", "platformio"):
+        found = shutil.which(executable)
+        if found:
+            return found
+
+    for candidate in platformio_virtualenv_candidates():
+        if candidate.exists():
+            return str(candidate)
+
+    searched = ", ".join(str(candidate) for candidate in platformio_virtualenv_candidates())
+    fail(
+        "PlatformIO executable not found; add pio to PATH or use the PlatformIO virtualenv. "
+        f"Searched: {searched}"
+    )
 
 
 def check_no_tracked_local_files() -> None:
@@ -155,7 +191,9 @@ def check_forbidden_text() -> None:
 
 
 def build_all_environments() -> None:
-    command = [pio_command(), "run"]
+    pio = pio_command()
+    print(f"PlatformIO executable: {pio}")
+    command = [pio, "run"]
     for environment in BUILD_ENVS:
         command.extend(("-e", environment))
     run(command, "PlatformIO build matrix")
